@@ -1,0 +1,56 @@
+export const stateOptions = [
+  { label: "Jammu & Kashmir", value: "Jammu & Kashmir" },
+  { label: "Himachal Pradesh", value: "Himachal Pradesh" },
+  { label: "Punjab", value: "Punjab" },
+  { label: "Chandigarh", value: "Chandigarh" },
+  { label: "Uttarakhand", value: "Uttarakhand" },
+  { label: "Haryana", value: "Haryana" },
+  { label: "Delhi", value: "Delhi" },
+  { label: "Rajasthan", value: "Rajasthan" },
+  { label: "Uttar Pradesh", value: "Uttar Pradesh" },
+  { label: "Bihar", value: "Bihar" },
+  { label: "Sikkim", value: "Sikkim" },
+  { label: "Arunachal Pradesh", value: "Arunachal Pradesh" },
+  { label: "Nagaland", value: "Nagaland" },
+  { label: "Manipur", value: "Manipur" },
+  { label: "Mizoram", value: "Mizoram" },
+  { label: "Tripura", value: "Tripura" },
+  { label: "Meghalaya", value: "Meghalaya" },
+  { label: "Assam", value: "Assam" },
+  { label: "West Bengal", value: "West Bengal" },
+  { label: "Jharkhand", value: "Jharkhand" },
+  { label: "Odisha", value: "Odisha" },
+  { label: "Chhattisgarh", value: "Chhattisgarh" },
+  { label: "Madhya Pradesh", value: "Madhya Pradesh" },
+  { label: "Gujarat", value: "Gujarat" },
+  { label: "Daman & Diu", value: "Daman & Diu" },
+  { label: "Dadra & Nagar Haveli", value: "Dadra & Nagar Haveli" },
+  { label: "Maharashtra", value: "Maharashtra" },
+  { label: "Andhra Pradesh (Old)", value: "Andhra Pradesh (Old)" },
+  { label: "Karnataka", value: "Karnataka" },
+  { label: "Goa", value: "Goa" },
+  { label: "Lakshadweep", value: "Lakshadweep" },
+  { label: "Kerala", value: "Kerala" },
+  { label: "Tamil Nadu", value: "Tamil Nadu" },
+  { label: "Puducherry", value: "Puducherry" },
+  { label: "Andaman & Nicobar Islands", value: "Andaman & Nicobar Islands" },
+  { label: "Telangana", value: "Telangana" },
+  { label: "Andhra Pradesh", value: "Andhra Pradesh" },
+  { label: "Ladakh", value: "Ladakh" },
+  { label: "Other Territory", value: "Other Territory" },
+  { label: "Center Jurisdiction", value: "Center Jurisdiction" }
+];
+
+
+
+// Broiler Stores
+
+
+export const BroilerMasterEndpoints = ['plant', 'farmer', 'stock_location', 'hatchery_machine', 'line_master', 
+  'rejection_reason', 'shed_capacity', 'mortality_reasons', 
+  'age_wise_standard_body_weight', 'mortality_incentive', 'mortality_deduction', 
+  'medicine_deduction_maintain', 'earned_rc_eer', 'earned_rc_cfcr', 
+  'vehicle_type_cost', 'fcr_grade', 'sales_emp_default', 'sales_rate', 
+  'egg_code_list', 'fcr_grade_block', 'shed_incentive_details', 
+  'mortality_incentive_plant', 'mortality_deduction_plant', 
+  'medicine_deduction_maintain_plant', 'earned_rc_cfcr_p', 'earned_rc_eer_p'];
