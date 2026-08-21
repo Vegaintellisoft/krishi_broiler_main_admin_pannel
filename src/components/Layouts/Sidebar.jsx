@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { RiArrowUpSFill } from "react-icons/ri";
+import { RiArrowUpSFill, RiLockPasswordLine } from "react-icons/ri";
 import Swal from "sweetalert2";
 import { IoGrid, IoFolder, IoLogOut, IoDocumentText } from "react-icons/io5";
 import { FaCartShopping } from "react-icons/fa6";
@@ -21,7 +21,7 @@ const Sidebar = () => {
     materialMaster,
     deliveryChallan,
     supplierMaster
-  } = getPermissions();
+  } = getPermissions() || {};
 
   const location = useLocation();
   const [menuExpanded, setMenuExpanded] = useState(false);
@@ -35,7 +35,7 @@ const Sidebar = () => {
     { path: "/supplierMaster", label: "Supplier Master", show: supplierMaster?.show },
     { path: "/ShippingMaster", label: "Shipping Master", show: shippingMaster?.show },
     { path: "/unitMaster", label: "Unit Master", show: unitMaster?.show },
-    { path: "/userMaster", label: "User Master", show: userMaster?.show }
+    { path: "/userMaster", label: "User Master", show: userMaster?.show !== false }
   ];
 
   const mastersVisibleItems = mastersMenuItems.filter(item => item.show);
@@ -47,8 +47,10 @@ const Sidebar = () => {
       setMenuExpanded(false);
     }
 
-    if (!['/admin/moderators', '/admin/roles'].includes(location.pathname)) {
+    if (!['/admin/roles', '/admin/activity-monitor'].includes(location.pathname)) {
       setAdminExpanded(false);
+    } else {
+      setAdminExpanded(true);
     }
   }, [location.pathname]);
 
@@ -82,13 +84,13 @@ const Sidebar = () => {
           <span className='text-sm'>Dashboard</span>
         </Link>
 
-        {/* Masters Dropdown — show only if at least one is visible */}
+        {/* Masters Dropdown — contains User Master */}
         {mastersVisibleItems.length > 0 && (
           <div className={`${mastersMenuItems.some(item => item.path === onSelect) ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]' : 'text-[#4A4C56] '}`}>
             <button
               onClick={() => {
                 setMenuExpanded(!menuExpanded);
-                setAdminExpanded(false); // Close Admin if Masters is toggled
+                setAdminExpanded(false);
               }}
               className={`w-full flex items-center justify-between px-2 
                 ${mastersMenuItems.some(item => item.path === onSelect) ? 'text-[#F3890A] bg-[#F9E6D3] ' : 'text-[#4A4C56] '}`}
@@ -140,10 +142,10 @@ const Sidebar = () => {
           </Link>
         )}
 
-        {/* Admin Dropdown */}
-        {adminPage?.show && (adminPage.showModerators || adminPage.showRoles) && (
+        {/* Admin Dropdown (Roles & Activity Log) */}
+        {adminPage?.show && (
           <div
-            className={`${['/admin/moderators', '/admin/roles'].includes(onSelect)
+            className={`${['/admin/roles', '/admin/activity-monitor'].includes(onSelect)
               ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]'
               : 'text-[#4A4C56]'
               }`}
@@ -151,10 +153,10 @@ const Sidebar = () => {
             <button
               onClick={() => {
                 setAdminExpanded(!adminExpanded);
-                setMenuExpanded(false); // Close Masters if Admin is toggled
+                setMenuExpanded(false);
               }}
               className={`w-full flex items-center justify-between px-2 
-              ${['/admin/moderators', '/admin/roles'].includes(onSelect)
+              ${['/admin/roles', '/admin/activity-monitor'].includes(onSelect)
                   ? 'text-[#F3890A] bg-[#F9E6D3]'
                   : 'text-[#4A4C56]'
                 }`}
@@ -173,14 +175,6 @@ const Sidebar = () => {
 
             {adminExpanded && (
               <div className="ml-10 space-y-1">
-                {adminPage.showModerators && (
-                  <div className="flex items-center">
-                    <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/moderators" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
-                    <Link to="/admin/moderators" className={`block p-2 rounded-lg text-sm ${onSelect === "/admin/moderators" ? 'text-[#F3890A] bg-[#F9E6D3]' : 'text-[#4A4C56]'}`}>
-                      Moderators
-                    </Link>
-                  </div>
-                )}
                 {adminPage.showRoles && (
                   <div className="flex items-center">
                     <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/roles" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
@@ -189,6 +183,12 @@ const Sidebar = () => {
                     </Link>
                   </div>
                 )}
+                <div className="flex items-center">
+                  <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/activity-monitor" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
+                  <Link to="/admin/activity-monitor" className={`block p-2 rounded-lg text-sm ${onSelect === "/admin/activity-monitor" ? 'text-[#F3890A] bg-[#F9E6D3]' : 'text-[#4A4C56]'}`}>
+                    Activity Log
+                  </Link>
+                </div>
               </div>
             )}
           </div>
@@ -201,6 +201,15 @@ const Sidebar = () => {
         >
           <IoDocumentText size={18} />
           <span>Reports</span>
+        </Link>
+
+        <Link
+          to="/change-password"
+          className={`flex px-5 py-3 gap-2 items-center justify-start text-sm
+              ${onSelect === "/change-password" ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]' : 'text-[#4A4C56] '}`}
+        >
+          <RiLockPasswordLine size={18} />
+          <span>Change Password</span>
         </Link>
 
         {/* Logout */}

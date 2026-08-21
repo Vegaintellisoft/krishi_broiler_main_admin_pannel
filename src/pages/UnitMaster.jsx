@@ -11,7 +11,7 @@ import { useAuth } from '../auth/AuthContext'
 
 const UnitMaster = () => {
     const { getPermissions } = useAuth();
-    const { unitMaster } = getPermissions();
+    const { unitMaster } = getPermissions() || {};
 
     const [data, setData] = useState([]);
     const [modalIsOpen, setIsOpen] = useState(false);

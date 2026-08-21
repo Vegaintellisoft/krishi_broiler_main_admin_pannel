@@ -14,7 +14,7 @@ import { useAuth } from '../auth/AuthContext'
 const DC = () => {
 
     const { getPermissions, getLocationId, user } = useAuth();
-    const { deliveryChallan, adminPage } = getPermissions();
+    const { deliveryChallan, adminPage } = getPermissions() || {};
     const location_id = getLocationId();
 
     const [data, setData] = useState([])

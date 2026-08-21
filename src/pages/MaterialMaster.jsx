@@ -11,7 +11,7 @@ import { useAuth } from '../auth/AuthContext';
 
 const MaterialMaster = () => {
   const { getPermissions } = useAuth();
-  const { materialMaster } = getPermissions();
+  const { materialMaster } = getPermissions() || {};
 
   const calenderInputRef = useRef('')
   const [selectDate, setSelectDate] = useState('Select Dates');

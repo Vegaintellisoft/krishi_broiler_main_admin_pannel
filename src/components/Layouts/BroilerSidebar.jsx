@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { RiArrowUpSFill } from "react-icons/ri";
+import { RiArrowUpSFill, RiLockPasswordLine } from "react-icons/ri";
 import Swal from "sweetalert2";
 import { IoGrid, IoLogOut } from "react-icons/io5";
 import { FaShoppingCart, FaEdit } from "react-icons/fa";
@@ -68,8 +68,6 @@ const BroilerSidebar = () => {
         { path: "/FeedApproval", label: "Feed Approval", show: feedApproval?.all },
     ];
 
-
-
     const mastersVisibleItems = mastersMenuItems.filter(item => item.show);
     const dataEntryVisibleItems = dataEntryMenuItems.filter(item => item.show);
     const feedVisibleItems = feedMenuItems.filter(item => item.show);
@@ -77,10 +75,10 @@ const BroilerSidebar = () => {
     useEffect(() => {
         setOnSelect(location.pathname);
 
-        // Optional: Auto-expand menu if current path is inside it
         if (mastersMenuItems.some(item => item.path === location.pathname)) setMenuExpanded(true);
         if (dataEntryMenuItems.some(item => item.path === location.pathname)) setDataEntryExpanded(true);
         if (feedVisibleItems.some(item => item.path === location.pathname)) setFeedExpanded(true);
+        if (['/admin/roles', '/admin/activity-monitor'].includes(location.pathname)) setAdminExpanded(true);
 
     }, [location.pathname]);
 
@@ -150,7 +148,7 @@ const BroilerSidebar = () => {
                     </div>
                 )}
 
-                {/* --- NEW DATA ENTRY SECTION START --- */}
+                {/* --- DATA ENTRY SECTION --- */}
                 {dataEntryVisibleItems.length > 0 && (
                     <div className={`${dataEntryMenuItems.some(item => item.path === onSelect) ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]' : 'text-[#4A4C56]'}`}>
                         <button
@@ -185,8 +183,8 @@ const BroilerSidebar = () => {
                         )}
                     </div>
                 )}
-                {/* --- NEW DATA ENTRY SECTION END --- */}
 
+                {/* Feeds Section */}
                 {feedVisibleItems.length > 0 && (
                     <div className={`${feedMenuItems.some(item => item.path === onSelect) ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]' : 'text-[#4A4C56]'}`}>
                         <button
@@ -222,7 +220,7 @@ const BroilerSidebar = () => {
                     </div>
                 )}
 
-                {/* Users */}
+                {/* Users (Broiler Users) */}
                 {broilerUsers?.show && (
                     <Link
                         to="/broilerUser"
@@ -234,11 +232,10 @@ const BroilerSidebar = () => {
                     </Link>
                 )}
 
-
-                {/* Admin Dropdown */}
-                {adminPage?.show && (adminPage.showModerators || adminPage.showRoles) && (
+                {/* Admin Dropdown (Roles & Activity Log) */}
+                {adminPage?.show && (
                     <div
-                        className={`${['/admin/moderators', '/admin/roles'].includes(onSelect)
+                        className={`${['/admin/roles', '/admin/activity-monitor'].includes(onSelect)
                             ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]'
                             : 'text-[#4A4C56]'
                             }`}
@@ -251,7 +248,7 @@ const BroilerSidebar = () => {
                                 setFeedExpanded(false);
                             }}
                             className={`w-full flex items-center justify-between px-2 
-                            ${['/admin/moderators', '/admin/roles'].includes(onSelect)
+                            ${['/admin/roles', '/admin/activity-monitor'].includes(onSelect)
                                     ? 'text-[#F3890A] bg-[#F9E6D3]'
                                     : 'text-[#4A4C56]'
                                 }`}
@@ -270,14 +267,6 @@ const BroilerSidebar = () => {
 
                         {adminExpanded && (
                             <div className="ml-10 space-y-1">
-                                {adminPage.showModerators && (
-                                    <div className="flex items-center">
-                                        <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/moderators" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
-                                        <Link to="/admin/moderators" className={`block p-2 rounded-lg text-sm ${onSelect === "/admin/moderators" ? 'text-[#F3890A] bg-[#F9E6D3]' : 'text-[#4A4C56]'}`}>
-                                            Moderators
-                                        </Link>
-                                    </div>
-                                )}
                                 {adminPage.showRoles && (
                                     <div className="flex items-center">
                                         <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/roles" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
@@ -286,10 +275,25 @@ const BroilerSidebar = () => {
                                         </Link>
                                     </div>
                                 )}
+                                <div className="flex items-center">
+                                    <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/activity-monitor" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
+                                    <Link to="/admin/activity-monitor" className={`block p-2 rounded-lg text-sm ${onSelect === "/admin/activity-monitor" ? 'text-[#F3890A] bg-[#F9E6D3]' : 'text-[#4A4C56]'}`}>
+                                        Activity Log
+                                    </Link>
+                                </div>
                             </div>
                         )}
                     </div>
                 )}
+
+                <Link
+                    to="/change-password"
+                    className={`flex px-5 py-3 gap-2 items-center justify-start text-sm
+                        ${onSelect === "/change-password" ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]' : 'text-[#4A4C56]'}`}
+                >
+                    <RiLockPasswordLine size={18} />
+                    <span>Change Password</span>
+                </Link>
 
                 {/* Logout */}
                 <button

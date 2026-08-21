@@ -13,7 +13,7 @@ import { useAuth } from '../auth/AuthContext'
 
 const SourceMaster = () => {
   const { getPermissions } = useAuth();
-  const { sourceMaster } = getPermissions();
+  const { sourceMaster } = getPermissions() || {};
 
   const [data, setData] = useState([]);
   const [admins, setAdmins] = useState([]);
@@ -518,7 +518,7 @@ const SourceMaster = () => {
                 <th className="p-4 text-center text-sm text-black">Address</th>
                 {/* <th className="p-4 text-center text-sm text-black">Status</th> */}
                 {
-                  (!sourceMaster?.edit && !sourceMaster.delete) ? "" : <th className="p-4 text-center text-sm text-black">Actions</th>
+                  (!sourceMaster?.edit && !sourceMaster?.delete) ? "" : <th className="p-4 text-center text-sm text-black">Actions</th>
                 }
 
               </tr>

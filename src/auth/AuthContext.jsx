@@ -162,12 +162,34 @@ export const AuthProvider = ({ children }) => {
         navigate('/login');
     };
 
+    const refreshPermissions = async () => {
+        try {
+            const token = getToken();
+            if (!token) return null;
+
+            const { data } = await axios.get('/admin/me/permissions', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+
+            if (data?.status && data?.permissions) {
+                storePermissions(data.permissions);
+                return data.permissions;
+            }
+        } catch (err) {
+            console.error("Error refreshing permissions:", err);
+        }
+        return getPermissions();
+    };
+
     useEffect(() => {
         checkTokenExpiration();
+        if (getToken()) {
+            refreshPermissions();
+        }
     }, []);
 
     return (
-        <AuthContext.Provider value={{ user, login, logout, getToken, getPermissions, getLocationId }}>
+        <AuthContext.Provider value={{ user, login, logout, getToken, getPermissions, getLocationId, refreshPermissions }}>
             {children}
         </AuthContext.Provider>
     );

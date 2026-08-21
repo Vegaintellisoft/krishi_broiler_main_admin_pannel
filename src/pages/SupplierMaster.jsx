@@ -12,7 +12,7 @@ import { useAuth } from '../auth/AuthContext'
 const SupplierMaster = () => {
 
   const { getPermissions } = useAuth();
-  const { supplierMaster } = getPermissions();
+  const { supplierMaster } = getPermissions() || {};
 
   const [data, setData] = useState([]);
   const [selectedItems, setSelectedItems] = useState([])

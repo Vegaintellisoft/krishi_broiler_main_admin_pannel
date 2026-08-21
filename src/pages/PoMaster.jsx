@@ -14,7 +14,7 @@ import { useAuth } from '../auth/AuthContext';
 const POMaster = () => {
 
   const { getPermissions } = useAuth();
-  const { purchaseOrder } = getPermissions();
+  const { purchaseOrder } = getPermissions() || {};
 
   const [data, setData] = useState([]);
   const [modalIsOpen, setIsOpen] = useState(false);

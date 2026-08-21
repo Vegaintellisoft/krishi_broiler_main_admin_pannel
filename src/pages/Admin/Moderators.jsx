@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { RiArrowUpSFill, RiSearchLine } from 'react-icons/ri';
 import { LuPlus } from 'react-icons/lu';
-import { FiEdit2 } from 'react-icons/fi';
+import { FiEdit2, FiTrash2 } from 'react-icons/fi';
 import { IoCloseSharp } from 'react-icons/io5';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
@@ -14,8 +14,14 @@ const Moderator = () => {
   const [moderators, setModerators] = useState([]);
   const [roles, setRoles] = useState([]);
   const { user, getPermissions } = useAuth();
-  const { adminPage } = getPermissions() || {};
+  const permissions = getPermissions() || {};
+  const { adminPage, userMaster, broilerUsers } = permissions;
   const isAdmin = adminPage?.showAllCategories === true;
+
+  // Permissions flags (default to true if not explicitly defined/false)
+  const canAdd = userMaster ? userMaster.add : (broilerUsers ? broilerUsers.add : true);
+  const canEdit = userMaster ? userMaster.edit : (broilerUsers ? broilerUsers.edit : true);
+  const canDelete = userMaster ? userMaster.delete : (broilerUsers ? broilerUsers.delete : true);
 
   const [categories, setCategories] = useState([
     { id: 1, name: "Wagon" },
@@ -36,9 +42,11 @@ const Moderator = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 5;
 
+  const currentCategory = user?.category || 'Wagon';
+
   const defaultForm = {
-    role: 'Administrator',
-    category: 'Wagon',
+    role: '',
+    category: currentCategory,
     first_name: '',
     last_name: '',
     username: '',
@@ -49,8 +57,8 @@ const Moderator = () => {
   }
 
   const [formData, setFormData] = useState({
-    role: 'Administrator',
-    category: 'Wagon',
+    role: '',
+    category: currentCategory,
     first_name: '',
     last_name: '',
     username: '',
@@ -61,18 +69,13 @@ const Moderator = () => {
   });
 
   const filteredRoles = useMemo(() => {
-    const selectedCategory = formData.category;
-    return roles.filter(role => role.category === selectedCategory);
-  }, [roles, formData.category]);
+    return roles.filter(role => role.category === (formData.category || currentCategory));
+  }, [roles, formData.category, currentCategory]);
 
   const fetchAdminData = async () => {
     setIsLoading(true)
     try {
-      let url = `/admin/getAll`;
-      if (!isAdmin) {
-        url += `/${user?.category}`;
-      }
-
+      const url = `/admin/getAll/${currentCategory}`;
       const { data } = await axios.get(url);
 
       if (data.status == true) {
@@ -83,6 +86,7 @@ const Moderator = () => {
     }
     catch (error) {
       console.log("Server Error: ", error)
+      setModerators([])
     } finally {
       setIsLoading(false)
     }
@@ -91,10 +95,9 @@ const Moderator = () => {
   const fetchRolesData = async () => {
     setIsLoading(true)
     try {
-      const { data } = await axios.get("/roles/getAll");
+      const { data } = await axios.get(`/roles/getAll/${currentCategory}`);
       if (data.status === true) {
         const activeRoles = data.data.filter(role => role.status === true);
-        console.log(activeRoles)
         setRoles(activeRoles);
       } else {
         setRoles([]);
@@ -110,7 +113,7 @@ const Moderator = () => {
   useEffect(() => {
     fetchAdminData()
     fetchRolesData()
-  }, [])
+  }, [user?.category])
 
   // --- Modal and Form Handling ---
   const openModal = (moderator = null) => {
@@ -119,15 +122,14 @@ const Moderator = () => {
       setUpdateUserId(moderator.id)
       setFormData({ ...moderator, password: '', confirmPassword: '' });
     } else {
-      const defaultCategory = user?.category || 'Wagon';
-      const defaultRolesForCategory = roles.filter(role => role.category === defaultCategory);
+      const defaultRolesForCategory = roles.filter(role => role.category === currentCategory);
       const initialRoleName = defaultRolesForCategory.length > 0 ? defaultRolesForCategory[0].role_name : '';
 
       setEditingModerator(null);
       setFormData({
         ...defaultForm,
-        role: initialRoleName, // Set a default valid role name
-        category: defaultCategory,
+        role: initialRoleName,
+        category: currentCategory,
       });
     }
     setIsOpen(true);
@@ -136,7 +138,7 @@ const Moderator = () => {
   const closeModal = () => {
     setIsOpen(false);
     setEditingModerator(null);
-    setFormData(defaultForm)
+    setFormData({ ...defaultForm, category: currentCategory })
   };
 
   const handleInputChange = (e) => {
@@ -266,13 +268,47 @@ const Moderator = () => {
       });
     } finally {
       closeModal();
-      setIsSubmitLoading(false)
+      setIsSubmitLoading(false);
     }
+  };
 
+  const handleDeleteModerator = async (item) => {
+    try {
+      const { isConfirmed } = await Swal.fire({
+        title: 'Are you sure?',
+        text: `Do you want to delete user "${item?.username}"?`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ea580c',
+        cancelButtonColor: '#808080',
+        confirmButtonText: 'Yes, delete it!'
+      });
 
-    // setModerators(moderators.map(mod =>
-    //   mod.id === id ? { ...mod, status: !mod.status } : mod
-    // ));
+      if (isConfirmed) {
+        setIsSubmitLoading(true);
+        const { data } = await axios.delete(`/admin/delete/${item.id}`);
+        if (data.status) {
+          await fetchAdminData();
+          Swal.fire({
+            toast: true,
+            position: "top-end",
+            icon: "success",
+            title: "User deleted successfully.",
+            showConfirmButton: false,
+            timer: 2000
+          });
+        }
+      }
+    } catch (err) {
+      console.log("Delete error:", err);
+      Swal.fire({
+        icon: 'error',
+        title: 'Error',
+        text: err.response?.data?.message || 'Failed to delete user.',
+      });
+    } finally {
+      setIsSubmitLoading(false);
+    }
   };
 
   const filteredData = useMemo(() => {
@@ -360,7 +396,7 @@ const Moderator = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
           <form onSubmit={handleSubmit} className="w-[60em] rounded-lg bg-white px-6 py-4 shadow-lg">
             <div className="flex items-center justify-between border-b py-2">
-              <h1 className="text-lg font-semibold">{editingModerator ? "Edit Moderator" : "Create Moderator"}</h1>
+              <h1 className="text-lg font-semibold">{editingModerator ? "Edit User" : "Create User"}</h1>
               <button type="button" onClick={closeModal} className="text-white flex justify-center bg-primary rounded-full w-7 h-7 items-center">
                 <IoCloseSharp />
               </button>
@@ -369,7 +405,7 @@ const Moderator = () => {
             <div className="mt-4 grid grid-cols-1 gap-x-7 gap-y-2 md:grid-cols-2">
               <div className='col-span-2'>
                 <label className="mb-2 block text-sm font-medium text-gray-700">Category</label>
-                <select disabled={!isAdmin} name="category" value={formData.category} onChange={handleInputChange} className="w-full rounded-md bg-gray-100 p-3 focus:outline-none focus:ring-2 focus:ring-orange-500">
+                <select disabled name="category" value={formData.category || currentCategory} onChange={handleInputChange} className="w-full rounded-md bg-gray-100 p-3 focus:outline-none focus:ring-2 focus:ring-orange-500 opacity-70 cursor-not-allowed">
                   {categories?.map((cat) => (
                     <option key={cat.id} value={cat.name}>
                       {cat.name}
@@ -431,13 +467,13 @@ const Moderator = () => {
 
       {/* --- Main Content: Header, Search, and Filters --- */}
       <div className="space-y-4 ">
-        <h1 className="text-xl font-bold text-gray-900">Moderator Management</h1>
+        <h1 className="text-xl font-bold text-gray-900">User Management</h1>
         <div className="flex items-center gap-x-2 text-sm text-gray-500 ">
           <Link to="/" className='text-orange-500'>Admin</Link>
           <span>
             <RiArrowUpSFill className='rotate-90 ' size={20} />
           </span>
-          <span>Moderators</span>
+          <span>Users</span>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -463,12 +499,14 @@ const Moderator = () => {
               </select>
             </div>
           </div>
-          <button onClick={() => openModal()} className="rounded-lg bg-orange-500 px-4 py-2 text-white hover:bg-orange-600">
-            <div className='flex items-center gap-2 text-xs'>
-              <LuPlus size={16} />
-              <span>Add New</span>
-            </div>
-          </button>
+          {canAdd && (
+            <button onClick={() => openModal()} className="rounded-lg bg-orange-500 px-4 py-2 text-white hover:bg-orange-600">
+              <div className='flex items-center gap-2 text-xs'>
+                <LuPlus size={16} />
+                <span>Add New</span>
+              </div>
+            </button>
+          )}
         </div>
       </div>
 
@@ -484,7 +522,7 @@ const Moderator = () => {
               <th className="p-4 text-left text-sm text-black">Email</th>
               <th className="p-4 text-left text-sm text-black">Last Login</th>
               <th className="p-4 text-center text-sm text-black">Status</th>
-              <th className="p-4 text-center text-sm text-black">Action</th>
+              {(canEdit || canDelete) && <th className="p-4 text-center text-sm text-black">Action</th>}
             </tr>
           </thead>
           <tbody className="divide-y">
@@ -497,23 +535,39 @@ const Moderator = () => {
                 <td className="p-4 text-left text-sm text-gray-600">{item?.email}</td>
                 <td className="p-4 text-left text-sm text-gray-600">{formatDateTime(item?.last_login)}</td>
                 <td className="p-4 text-center text-sm text-gray-600">
-                  <label className="relative inline-flex cursor-pointer items-center">
-                    <input type="checkbox" checked={item?.status} onChange={() => handleToggleTableRowStatus(item)} className="peer sr-only" />
+                  <label className={`relative inline-flex items-center ${canEdit ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
+                    <input type="checkbox" checked={item?.status} disabled={!canEdit} onChange={() => canEdit && handleToggleTableRowStatus(item)} className="peer sr-only" />
                     <div className="peer h-6 w-11 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-0.5 after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all peer-checked:bg-green-600 peer-checked:after:translate-x-full peer-checked:after:border-white"></div>
                   </label>
                 </td>
-                <td className="p-4 text-center">
-                  <button onClick={() => openModal(item)} className="text-gray-500 hover:text-orange-500">
-                    <FiEdit2 size={20} />
-                  </button>
-                </td>
+                {(canEdit || canDelete) && (
+                  <td className="p-4 text-center">
+                    <div className="flex items-center justify-center gap-3">
+                      {canEdit && (
+                        <button onClick={() => openModal(item)} className="text-gray-500 hover:text-orange-500 transition-colors" title="Edit User">
+                          <FiEdit2 size={18} />
+                        </button>
+                      )}
+                      {canDelete && (
+                        <button
+                          onClick={() => handleDeleteModerator(item)}
+                          disabled={item?.username === 'admin'}
+                          className={`text-gray-500 hover:text-red-600 transition-colors ${item?.username === 'admin' ? 'opacity-30 cursor-not-allowed' : ''}`}
+                          title={item?.username === 'admin' ? "Primary admin user cannot be deleted" : "Delete User"}
+                        >
+                          <FiTrash2 size={18} />
+                        </button>
+                      )}
+                    </div>
+                  </td>
+                )}
               </tr>
             ))}
 
             {
               (paginatedData?.length <= 0 && !isLoading) &&
               <tr>
-                <td colSpan="7" className="py-10 text-center text-gray-500 text-sm">
+                <td colSpan="8" className="py-10 text-center text-gray-500 text-sm">
                   No Data Available
                 </td>
               </tr>
@@ -521,7 +575,7 @@ const Moderator = () => {
 
             {isLoading && (
               <tr>
-                <td colSpan="7" className="py-10 text-center">
+                <td colSpan="8" className="py-10 text-center">
                   <div className="flex justify-center items-center">
                     <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
                   </div>

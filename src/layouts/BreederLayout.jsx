@@ -21,6 +21,7 @@ import EggCollection from "../pages/Breeder/EggCollection/EggCollection";
 import Mortality from "../pages/Breeder/Mortality/Mortality";
 import BirdWeighingList from "../pages/Breeder/BirdWeighing/BirdWeighingList";
 import BirdWeighing from "../pages/Breeder/BirdWeighing/BirdWeighing";
+import ChangePassword from "../pages/ChangePassword";
 
 const BreederLayout = () => {
   const { user } = useAuth();
@@ -34,6 +35,7 @@ const BreederLayout = () => {
           <Routes>
 
             <Route path='/' element={<div>Breeder Dashboard</div>} />
+            <Route path='/change-password' element={<ChangePassword />} />
             <Route path='/unitname' element={<UnitNameList />} />
             <Route path='/unitname/add' element={<UnitName />} />
             <Route path='/biosecurity' element={<BioSecurityList />} />

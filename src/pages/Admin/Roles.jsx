@@ -74,7 +74,7 @@ const DEFAULT_ACCESS_ACTIONS = ["show", "edit", "add", "delete"];
 const SPECIAL_ACTIONS = {
     // Wagon
     "purchaseOrder": ["show", "edit", "delete"],
-    "deliveryChallan": ["show", "view", "cancel"],
+    "deliveryChallan": ["show", "add", "view", "cancel"],
     // Shared
     "adminPage": ["show", "showRoles", "showModerators", "showAllCategories"],
     // Broiler - Farm Activity has additional specific actions
@@ -98,7 +98,7 @@ const ACTION_DISPLAY_NAMES = {
     locationEntry: "Location Entry",
     bluetoothEntry: "Bluetooth Entry",
     showRoles: "Show Roles",
-    showModerators: "Show Moderators",
+    showModerators: "Show Users",
     showAllCategories: "All Categories Access",
 };
 
@@ -107,8 +107,10 @@ const INITIAL_CATEGORY = "Wagon";
 // --- Main Component ---
 export default function Roles() {
     const { user, getPermissions } = useAuth();
-    const { adminPage } = getPermissions() || {};
+    const permissions = getPermissions() || {};
+    const { adminPage } = permissions;
     const isAdmin = adminPage?.showAllCategories === true;
+    const userCategory = user?.category || INITIAL_CATEGORY;
 
     const [roles, setRoles] = useState([]);
     const [modalIsOpen, setModalIsOpen] = useState(false);
@@ -124,15 +126,15 @@ export default function Roles() {
     const [formData, setFormData] = useState({
         role_name: '',
         status: true,
-        category: INITIAL_CATEGORY,
+        category: userCategory,
     });
 
-    const currentConfig = DIVISION_CONFIG[formData.category] || DIVISION_CONFIG[INITIAL_CATEGORY];
+    const currentConfig = DIVISION_CONFIG[formData.category] || DIVISION_CONFIG[userCategory];
     const currentAccessRules = currentConfig.accessRules;
 
     // --- Utility Function to Initialize/Reset Division Access Rules ---
-    const initializeDivisionAccessRules = useCallback((initialCategory = INITIAL_CATEGORY, existingRole = {}) => {
-        const config = DIVISION_CONFIG[initialCategory];
+    const initializeDivisionAccessRules = useCallback((initialCategory = userCategory, existingRole = {}) => {
+        const config = DIVISION_CONFIG[initialCategory] || DIVISION_CONFIG[INITIAL_CATEGORY];
         const newAccess = {};
         const oldPermissions = existingRole.permissions || {};
 
@@ -176,17 +178,13 @@ export default function Roles() {
         });
 
         return newAccess;
-    }, []);
+    }, [userCategory]);
 
     // --- API Calls ---
     const fetchRolesData = async () => {
         setIsLoading(true)
         try {
-            let url = `/roles/getAll`;
-            if (!isAdmin) {
-                url += `/${user?.category}`;
-            }
-
+            const url = `/roles/getAll/${userCategory}`;
             const { data } = await axios.get(url);
 
             if (data.status === true) {
@@ -197,6 +195,7 @@ export default function Roles() {
         }
         catch (error) {
             console.log("Server Error: ", error)
+            setRoles([])
         } finally {
             setIsLoading(false)
         }
@@ -204,7 +203,7 @@ export default function Roles() {
 
     useEffect(() => {
         fetchRolesData()
-    }, [])
+    }, [user?.category])
 
     // --- Modal and Form Logic ---
     const closeModal = () => {
@@ -216,14 +215,14 @@ export default function Roles() {
         setFormData({
             role_name: '',
             status: true,
-            category: INITIAL_CATEGORY,
-            ...initializeDivisionAccessRules(INITIAL_CATEGORY)
+            category: userCategory,
+            ...initializeDivisionAccessRules(userCategory)
         });
     };
 
     const openModal = (role = null) => {
         if (role) {
-            const roleCategory = role.category || INITIAL_CATEGORY;
+            const roleCategory = role.category || userCategory;
 
             const roleFormData = {
                 ...role,
@@ -244,8 +243,8 @@ export default function Roles() {
             setFormData({
                 role_name: '',
                 status: true,
-                category: INITIAL_CATEGORY,
-                ...initializeDivisionAccessRules(INITIAL_CATEGORY)
+                category: userCategory,
+                ...initializeDivisionAccessRules(userCategory)
             });
         }
         setModalIsOpen(true);
@@ -534,31 +533,35 @@ export default function Roles() {
                                     Select Category
                                 </h3>
                                 <div className="flex flex-wrap gap-6">
-                                    {Object.keys(DIVISION_CONFIG).map((option) => (
-                                        <label
-                                            key={option}
-                                            className={`flex items-center gap-3 text-sm font-medium p-2 pr-4 rounded-full border transition-all duration-200 cursor-pointer ${formData.category === option
-                                                ? "bg-orange-50 border-orange-500 text-orange-600 shadow-sm ring-2 ring-orange-200"
-                                                : "bg-white border-gray-300 text-gray-700 hover:bg-gray-100"
-                                                }`}
-                                        >
-                                            <input
-                                                type="radio"
-                                                name="category"
-                                                value={option}
-                                                checked={formData.category === option}
-                                                onChange={() => handleCategoryChange(option)}
-                                                className="hidden"
-                                            />
-                                            {/* Custom Radio Icon */}
-                                            <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors duration-200 ${formData.category === option ? 'border-orange-600 bg-white' : 'border-gray-400'}`}>
-                                                {formData.category === option && (
-                                                    <span className="w-2 h-2 bg-orange-600 rounded-full"></span>
-                                                )}
-                                            </span>
-                                            {option}
-                                        </label>
-                                    ))}
+                                    {Object.keys(DIVISION_CONFIG).map((option) => {
+                                         const isDisabledOption = !isAdmin && option !== userCategory;
+                                         return (
+                                             <label
+                                                 key={option}
+                                                 className={`flex items-center gap-3 text-sm font-medium p-2 pr-4 rounded-full border transition-all duration-200 ${isDisabledOption ? 'opacity-50 cursor-not-allowed bg-gray-100' : 'cursor-pointer'} ${formData.category === option
+                                                     ? "bg-orange-50 border-orange-500 text-orange-600 shadow-sm ring-2 ring-orange-200"
+                                                     : "bg-white border-gray-300 text-gray-700 hover:bg-gray-100"
+                                                     }`}
+                                             >
+                                                 <input
+                                                     type="radio"
+                                                     name="category"
+                                                     value={option}
+                                                     disabled={isDisabledOption}
+                                                     checked={formData.category === option}
+                                                     onChange={() => handleCategoryChange(option)}
+                                                     className="hidden"
+                                                 />
+                                                 {/* Custom Radio Icon */}
+                                                 <span className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors duration-200 ${formData.category === option ? 'border-orange-600 bg-white' : 'border-gray-400'}`}>
+                                                     {formData.category === option && (
+                                                         <span className="w-2 h-2 bg-orange-600 rounded-full"></span>
+                                                     )}
+                                                 </span>
+                                                 {option}
+                                             </label>
+                                         );
+                                     })}
                                 </div>
                             </div>
                             {/* --- END Division Selector --- */}
@@ -598,7 +601,6 @@ export default function Roles() {
                                                             {section.modules.map((mod, index) => {
                                                                 const moduleActions = SPECIAL_ACTIONS[mod.key] || DEFAULT_ACCESS_ACTIONS;
                                                                 const isShowEnabled = formData[`${mod.key}_show`] === true || formData[`${mod.key}_all`] === true;
-                                                                const isAdministrator = editingRole?.role_name === "Administrator";
 
                                                                 return (
                                                                     <tr key={mod.key}
@@ -610,7 +612,7 @@ export default function Roles() {
                                                                             const key = `${mod.key}_${action}`;
                                                                             const isSubPermission = !['show', 'list', 'view', 'all'].includes(action);
                                                                             const isDisabledByRule = isSubPermission && !isShowEnabled && isModuleAction;
-                                                                            const isDisabledFinal = isAdministrator || isDisabledByRule;
+                                                                            const isDisabledFinal = isDisabledByRule;
                                                                             let isChecked = formData[key] || false;
                                                                             if (isDisabledByRule) isChecked = false;
 
@@ -668,7 +670,6 @@ export default function Roles() {
                                                     }, []);
 
                                                     const isShowEnabled = formData[`${menuItem}_show`] === true || formData[`${menuItem}_all`] === true;
-                                                    const isAdministrator = editingRole?.role_name === "Administrator";
 
                                                     return (
                                                         <tr key={menuItem}
@@ -680,7 +681,7 @@ export default function Roles() {
                                                                 const key = `${menuItem}_${action}`;
                                                                 const isSubPermission = !['show', 'list', 'view', 'all'].includes(action);
                                                                 const isDisabledByRule = isSubPermission && !isShowEnabled && isModuleAction;
-                                                                const isDisabledFinal = isAdministrator || isDisabledByRule;
+                                                                const isDisabledFinal = isDisabledByRule;
                                                                 let isChecked = formData[key] || false;
                                                                 if (isDisabledByRule) isChecked = false;
 
@@ -723,7 +724,6 @@ export default function Roles() {
                             <button type="button" onClick={closeModal} className="px-6 py-2.5 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-colors">Discard</button>
                             <button
                                 type="submit"
-                                disabled={editingRole?.role_name === "Administrator"}
                                 className="px-6 py-2.5 bg-orange-600 text-white rounded-lg font-semibold hover:bg-orange-700 transition-colors shadow-lg shadow-orange-300/50"
                             >
                                 {editingRole ? 'Update Role' : 'Save Role'}
@@ -792,31 +792,37 @@ export default function Roles() {
                                 <td className="p-4 text-left font-medium text-sm text-gray-800">{role.role_name}</td>
                                 <td className="p-4 text-left text-sm text-gray-600">{role.category || INITIAL_CATEGORY}</td>
                                 <td className="p-4 text-center">
-                                    <label className="relative inline-flex cursor-pointer items-center">
+                                    <label className="relative inline-flex items-center cursor-pointer" title="Toggle role status">
                                         <input
                                             type="checkbox"
                                             checked={role.status === true || role.status === "active"}
                                             onChange={() => handleToggleRoleStatus(role)}
-                                            disabled={role?.role_name === "Administrator"}
                                             className="peer sr-only"
                                         />
                                         <div
                                             className={`peer h-6 w-11 rounded-full bg-gray-200 
             after:absolute after:start-[2px] after:top-0.5 after:h-5 after:w-5 after:rounded-full 
             after:border after:border-gray-300 after:bg-white after:transition-all 
-            peer-checked:bg-green-600 peer-checked:after:translate-x-full peer-checked:after:border-white
-            ${role?.role_name === "Administrator" ? "opacity-50 cursor-not-allowed" : ""}`}
+            peer-checked:bg-green-600 peer-checked:after:translate-x-full peer-checked:after:border-white`}
                                         ></div>
                                     </label>
-
                                 </td>
                                 <td className="p-4 text-left text-sm text-gray-600">{formatDateTime(role.created_at)}</td>
                                 <td className="p-4 text-center">
                                     <div className="flex items-center justify-center gap-3">
-                                        <button onClick={() => openModal(role)} className="text-gray-500 hover:text-orange-500">
+                                        <button
+                                            onClick={() => openModal(role)}
+                                            className="text-gray-500 hover:text-orange-500"
+                                            title="Edit Role"
+                                        >
                                             <FiEdit2 size={20} />
                                         </button>
-                                        <button onClick={() => handleDeleteRole(role)} disabled={role?.role_name === "Administrator"} className={`text-gray-500 hover:text-red-500 ${role?.role_name === "Administrator" ? "opacity-50 cursor-not-allowed hover:text-gray-500" : ""}`}>
+                                        <button
+                                            onClick={() => handleDeleteRole(role)}
+                                            disabled={role?.role_name === "Administrator"}
+                                            className={`text-gray-500 hover:text-red-500 ${role?.role_name === "Administrator" ? "opacity-50 cursor-not-allowed hover:text-gray-500" : ""}`}
+                                            title="Delete Role"
+                                        >
                                             <FiTrash2 size={20} />
                                         </button>
                                     </div>

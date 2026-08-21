@@ -14,7 +14,7 @@ import { useAuth } from '../auth/AuthContext'
 const ShippingMaster = () => {
 
   const { getPermissions } = useAuth();
-  const { shippingMaster } = getPermissions();
+  const { shippingMaster } = getPermissions() || {};
 
   const [data, setData] = useState([]);
   const [selectedItems, setSelectedItems] = useState([])

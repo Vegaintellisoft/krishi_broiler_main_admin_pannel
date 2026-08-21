@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { RiArrowUpSFill } from "react-icons/ri";
+import { RiArrowUpSFill, RiLockPasswordLine } from "react-icons/ri";
 import Swal from "sweetalert2";
 import { IoGrid, IoLogOut } from "react-icons/io5";
 import { useAuth } from '../../auth/AuthContext';
@@ -181,6 +181,15 @@ const BreederSidebar = () => {
                 >
                     <FaWeight size={18} />
                     <span>Bird Weighing</span>
+                </Link>
+
+                <Link
+                    to="/change-password"
+                    className={`flex px-5 py-3 gap-2 items-center justify-start text-sm
+                                            ${onSelect === "/change-password" ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]' : 'text-[#4A4C56] '}`}
+                >
+                    <RiLockPasswordLine size={18} />
+                    <span>Change Password</span>
                 </Link>
 
                 {/* Logout */}
