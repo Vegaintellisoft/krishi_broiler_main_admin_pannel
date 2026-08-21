@@ -51,7 +51,7 @@ const DIVISION_CONFIG = {
         defaultRoleName: "Wagon Logistics Head (e.g., Fleet Manager)",
         accessRules: [
             "unitMaster", "userMaster", "sourceMaster", "purchaseOrder", "materialMaster",
-            "shippingMaster", "supplierMaster", "deliveryChallan", "adminPage"
+            "shippingMaster", "supplierMaster", "deliveryChallan", "reports", "adminPage"
         ],
     },
     "Broiler": {
@@ -75,19 +75,19 @@ const SPECIAL_ACTIONS = {
     // Wagon
     "purchaseOrder": ["show", "edit", "delete"],
     "deliveryChallan": ["show", "add", "view", "cancel"],
+    "reports": ["show"],
     // Shared
-    "adminPage": ["show", "showRoles", "showModerators", "showAllCategories"],
-    // Broiler - Farm Activity has additional specific actions
+    "adminPage": ["show", "showRoles", "showModerators", "showAllCategories", "showActivityLog"],
+    // Broiler - Modules with location on/off & specific actions
     "farmActivity": ["all", "dvrEntrySave", "sapSubmit", "locationEntry", "bluetoothEntry"],
-    // Broiler - single "all" toggle for full access
-    "shedReadiness": ["all"],
-    "chickReceipt": ["all"],
-    "medicineIssued": ["all"],
-    "feedRequest": ["all"],
-    "feedApproval": ["all"],
-    "feedTransfer": ["all"],
-    "feedReturn": ["all"],
-    "broilerSupply": ["all"],
+    "shedReadiness": ["all", "locationEntry"],
+    "chickReceipt": ["all", "locationEntry", "bluetoothEntry"],
+    "medicineIssued": ["all", "locationEntry"],
+    "feedRequest": ["all", "locationEntry"],
+    "feedApproval": ["all", "locationEntry"],
+    "feedTransfer": ["all", "locationEntry"],
+    "feedReturn": ["all", "locationEntry"],
+    "broilerSupply": ["all", "locationEntry", "bluetoothEntry"],
 };
 
 // Display names for action column headers
@@ -100,6 +100,8 @@ const ACTION_DISPLAY_NAMES = {
     showRoles: "Show Roles",
     showModerators: "Show Users",
     showAllCategories: "All Categories Access",
+    showActivityLog: "Activity Log",
+    show: "Show",
 };
 
 const INITIAL_CATEGORY = "Wagon";

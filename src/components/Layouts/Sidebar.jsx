@@ -20,7 +20,8 @@ const Sidebar = () => {
     shippingMaster,
     materialMaster,
     deliveryChallan,
-    supplierMaster
+    supplierMaster,
+    reports
   } = getPermissions() || {};
 
   const location = useLocation();
@@ -35,7 +36,7 @@ const Sidebar = () => {
     { path: "/supplierMaster", label: "Supplier Master", show: supplierMaster?.show },
     { path: "/ShippingMaster", label: "Shipping Master", show: shippingMaster?.show },
     { path: "/unitMaster", label: "Unit Master", show: unitMaster?.show },
-    { path: "/userMaster", label: "User Master", show: userMaster?.show !== false }
+    { path: "/userMaster", label: "User Master", show: userMaster?.show }
   ];
 
   const mastersVisibleItems = mastersMenuItems.filter(item => item.show);
@@ -47,7 +48,7 @@ const Sidebar = () => {
       setMenuExpanded(false);
     }
 
-    if (!['/admin/roles', '/admin/activity-monitor'].includes(location.pathname)) {
+    if (!['/admin/roles', '/admin/activity-monitor', '/admin/moderators'].includes(location.pathname)) {
       setAdminExpanded(false);
     } else {
       setAdminExpanded(true);
@@ -142,10 +143,10 @@ const Sidebar = () => {
           </Link>
         )}
 
-        {/* Admin Dropdown (Roles & Activity Log) */}
-        {adminPage?.show && (
+        {/* Admin Dropdown — only show if at least one sub-item is enabled */}
+        {adminPage?.show && (adminPage?.showRoles || adminPage?.showModerators || adminPage?.showActivityLog) && (
           <div
-            className={`${['/admin/roles', '/admin/activity-monitor'].includes(onSelect)
+            className={`${['/admin/roles', '/admin/activity-monitor', '/admin/moderators'].includes(onSelect)
               ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]'
               : 'text-[#4A4C56]'
               }`}
@@ -156,7 +157,7 @@ const Sidebar = () => {
                 setMenuExpanded(false);
               }}
               className={`w-full flex items-center justify-between px-2 
-              ${['/admin/roles', '/admin/activity-monitor'].includes(onSelect)
+              ${['/admin/roles', '/admin/activity-monitor', '/admin/moderators'].includes(onSelect)
                   ? 'text-[#F3890A] bg-[#F9E6D3]'
                   : 'text-[#4A4C56]'
                 }`}
@@ -175,6 +176,14 @@ const Sidebar = () => {
 
             {adminExpanded && (
               <div className="ml-10 space-y-1">
+                {adminPage.showModerators && (
+                  <div className="flex items-center">
+                    <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/moderators" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
+                    <Link to="/admin/moderators" className={`block p-2 rounded-lg text-sm ${onSelect === "/admin/moderators" ? 'text-[#F3890A] bg-[#F9E6D3]' : 'text-[#4A4C56]'}`}>
+                      Moderators
+                    </Link>
+                  </div>
+                )}
                 {adminPage.showRoles && (
                   <div className="flex items-center">
                     <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/roles" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
@@ -183,25 +192,29 @@ const Sidebar = () => {
                     </Link>
                   </div>
                 )}
-                <div className="flex items-center">
-                  <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/activity-monitor" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
-                  <Link to="/admin/activity-monitor" className={`block p-2 rounded-lg text-sm ${onSelect === "/admin/activity-monitor" ? 'text-[#F3890A] bg-[#F9E6D3]' : 'text-[#4A4C56]'}`}>
-                    Activity Log
-                  </Link>
-                </div>
+                {adminPage.showActivityLog && (
+                  <div className="flex items-center">
+                    <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/activity-monitor" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
+                    <Link to="/admin/activity-monitor" className={`block p-2 rounded-lg text-sm ${onSelect === "/admin/activity-monitor" ? 'text-[#F3890A] bg-[#F9E6D3]' : 'text-[#4A4C56]'}`}>
+                      Activity Log
+                    </Link>
+                  </div>
+                )}
               </div>
             )}
           </div>
         )}
 
-        <Link
-          to="/reports"
-          className={`flex px-5 py-3 gap-2 items-center justify-start text-sm
-              ${onSelect === "/reports" ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]' : 'text-[#4A4C56] '}`}
-        >
-          <IoDocumentText size={18} />
-          <span>Reports</span>
-        </Link>
+        {reports?.show && (
+          <Link
+            to="/reports"
+            className={`flex px-5 py-3 gap-2 items-center justify-start text-sm
+                ${onSelect === "/reports" ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]' : 'text-[#4A4C56] '}`}
+          >
+            <IoDocumentText size={18} />
+            <span>Reports</span>
+          </Link>
+        )}
 
         <Link
           to="/change-password"

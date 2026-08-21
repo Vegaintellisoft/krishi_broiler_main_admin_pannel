@@ -1,31 +1,65 @@
 // utils/dateFormatter.js
 export const formatDateTime = (dateString) => {
-    if (!dateString) return `-`
-    const date = new Date(dateString);
+    if (!dateString) return '-';
+    try {
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return String(dateString);
 
-    const day = String(date.getDate()).padStart(2, "0");
-    const month = String(date.getMonth() + 1).padStart(2, "0"); // Months start from 0
-    const year = date.getFullYear();
+        // Format in Indian Standard Time (IST - Asia/Kolkata)
+        const options = {
+            timeZone: 'Asia/Kolkata',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        };
 
-    let hours = date.getHours();
-    const minutes = String(date.getMinutes()).padStart(2, "0");
-    const ampm = hours >= 12 ? "PM" : "AM";
+        const formatter = new Intl.DateTimeFormat('en-GB', options);
+        const parts = formatter.formatToParts(date);
+        
+        let day = '', month = '', year = '', hour = '', minute = '', dayPeriod = '';
+        for (const p of parts) {
+            if (p.type === 'day') day = p.value;
+            if (p.type === 'month') month = p.value;
+            if (p.type === 'year') year = p.value;
+            if (p.type === 'hour') hour = p.value;
+            if (p.type === 'minute') minute = p.value;
+            if (p.type === 'dayPeriod') dayPeriod = p.value.toUpperCase();
+        }
 
-    hours = hours % 12;
-    hours = hours ? hours : 12; // Convert 0 to 12
-    const formattedHours = String(hours).padStart(2, "0");
-
-    return `${day}-${month}-${year} ${formattedHours}:${minutes} ${ampm}`;
+        return `${day}-${month}-${year} ${hour}:${minute} ${dayPeriod}`;
+    } catch (_) {
+        return String(dateString);
+    }
 };
 
-
 export const formatDate = (dateString) => {
-    if (!dateString) return `-`
-    const date = new Date(dateString);
+    if (!dateString) return '-';
+    try {
+        const date = new Date(dateString);
+        if (isNaN(date.getTime())) return String(dateString);
 
-    const day = String(date.getDate()).padStart(2, "0");
-    const month = String(date.getMonth() + 1).padStart(2, "0"); // Months start from 0
-    const year = date.getFullYear();
+        const options = {
+            timeZone: 'Asia/Kolkata',
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+        };
 
-    return `${day}-${month}-${year}`;
+        const formatter = new Intl.DateTimeFormat('en-GB', options);
+        const parts = formatter.formatToParts(date);
+        
+        let day = '', month = '', year = '';
+        for (const p of parts) {
+            if (p.type === 'day') day = p.value;
+            if (p.type === 'month') month = p.value;
+            if (p.type === 'year') year = p.value;
+        }
+
+        return `${day}-${month}-${year}`;
+    } catch (_) {
+        return String(dateString);
+    }
 };

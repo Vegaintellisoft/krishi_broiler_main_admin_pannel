@@ -13,11 +13,12 @@ import { BroilerMasterEndpoints } from '../../utils/store';
 
 const BroilerSidebar = () => {
     const { getPermissions, logout } = useAuth();
+    const permissions = getPermissions() || {};
 
     const { adminPage, broilerUsers, allMasters,
         farmActivity, shedReadiness, chickReceipt, medicineIssued,
         feedTransfer, feedReturn, feedApproval, feedRequest, broilerSupply
-    } = getPermissions();
+    } = permissions;
 
     const location = useLocation();
     const [menuExpanded, setMenuExpanded] = useState(false);
@@ -78,7 +79,7 @@ const BroilerSidebar = () => {
         if (mastersMenuItems.some(item => item.path === location.pathname)) setMenuExpanded(true);
         if (dataEntryMenuItems.some(item => item.path === location.pathname)) setDataEntryExpanded(true);
         if (feedVisibleItems.some(item => item.path === location.pathname)) setFeedExpanded(true);
-        if (['/admin/roles', '/admin/activity-monitor'].includes(location.pathname)) setAdminExpanded(true);
+        if (['/admin/roles', '/admin/activity-monitor', '/admin/moderators'].includes(location.pathname)) setAdminExpanded(true);
 
     }, [location.pathname]);
 
@@ -106,7 +107,7 @@ const BroilerSidebar = () => {
                 <Link
                     to="/"
                     className={`flex items-center justify-start text-sm gap-2 px-5 py-3    
-            ${onSelect === '/' ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]' : 'text-[#4A4C56]'}`}
+                        ${onSelect === '/' ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]' : 'text-[#4A4C56]'}`}
                 >
                     <IoGrid size={18} />
                     <span className='text-sm'>Dashboard</span>
@@ -232,10 +233,10 @@ const BroilerSidebar = () => {
                     </Link>
                 )}
 
-                {/* Admin Dropdown (Roles & Activity Log) */}
-                {adminPage?.show && (
+                {/* Admin Dropdown — only show if at least one sub-item is enabled */}
+                {adminPage?.show && (adminPage?.showRoles || adminPage?.showModerators || adminPage?.showActivityLog) && (
                     <div
-                        className={`${['/admin/roles', '/admin/activity-monitor'].includes(onSelect)
+                        className={`${['/admin/roles', '/admin/activity-monitor', '/admin/moderators'].includes(onSelect)
                             ? 'text-[#F3890A] bg-[#F9E6D3] border-l-4 border-[#F3890A]'
                             : 'text-[#4A4C56]'
                             }`}
@@ -248,7 +249,7 @@ const BroilerSidebar = () => {
                                 setFeedExpanded(false);
                             }}
                             className={`w-full flex items-center justify-between px-2 
-                            ${['/admin/roles', '/admin/activity-monitor'].includes(onSelect)
+                            ${['/admin/roles', '/admin/activity-monitor', '/admin/moderators'].includes(onSelect)
                                     ? 'text-[#F3890A] bg-[#F9E6D3]'
                                     : 'text-[#4A4C56]'
                                 }`}
@@ -267,6 +268,14 @@ const BroilerSidebar = () => {
 
                         {adminExpanded && (
                             <div className="ml-10 space-y-1">
+                                {adminPage.showModerators && (
+                                    <div className="flex items-center">
+                                        <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/moderators" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
+                                        <Link to="/admin/moderators" className={`block p-2 rounded-lg text-sm ${onSelect === "/admin/moderators" ? 'text-[#F3890A] bg-[#F9E6D3]' : 'text-[#4A4C56]'}`}>
+                                            Moderators
+                                        </Link>
+                                    </div>
+                                )}
                                 {adminPage.showRoles && (
                                     <div className="flex items-center">
                                         <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/roles" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
@@ -275,12 +284,14 @@ const BroilerSidebar = () => {
                                         </Link>
                                     </div>
                                 )}
-                                <div className="flex items-center">
-                                    <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/activity-monitor" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
-                                    <Link to="/admin/activity-monitor" className={`block p-2 rounded-lg text-sm ${onSelect === "/admin/activity-monitor" ? 'text-[#F3890A] bg-[#F9E6D3]' : 'text-[#4A4C56]'}`}>
-                                        Activity Log
-                                    </Link>
-                                </div>
+                                {adminPage.showActivityLog && (
+                                    <div className="flex items-center">
+                                        <span className={`w-2.5 h-2.5 rounded-full ${onSelect === "/admin/activity-monitor" ? 'bg-orange-500' : 'bg-white border border-slate-400'}`}></span>
+                                        <Link to="/admin/activity-monitor" className={`block p-2 rounded-lg text-sm ${onSelect === "/admin/activity-monitor" ? 'text-[#F3890A] bg-[#F9E6D3]' : 'text-[#4A4C56]'}`}>
+                                            Activity Log
+                                        </Link>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </div>
