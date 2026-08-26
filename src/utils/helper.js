@@ -2,7 +2,19 @@
 export const formatDateTime = (dateString) => {
     if (!dateString) return '-';
     try {
-        const date = new Date(dateString);
+        let date;
+        if (typeof dateString === 'string') {
+            const s = dateString.trim();
+            // If string is in SQL format "YYYY-MM-DD HH:mm:ss..." without timezone offset, append 'Z' so it is treated as UTC
+            if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}/.test(s) && !s.endsWith('Z') && !/[+-]\d{2}(:\d{2})?$/.test(s)) {
+                date = new Date(s.replace(' ', 'T') + 'Z');
+            } else {
+                date = new Date(s);
+            }
+        } else {
+            date = new Date(dateString);
+        }
+
         if (isNaN(date.getTime())) return String(dateString);
 
         // Format in Indian Standard Time (IST - Asia/Kolkata)

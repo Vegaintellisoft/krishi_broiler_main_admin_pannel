@@ -73,7 +73,7 @@ const DEFAULT_ACCESS_ACTIONS = ["show", "edit", "add", "delete"];
 // Per-module action overrides
 const SPECIAL_ACTIONS = {
     // Wagon
-    "purchaseOrder": ["show", "edit", "delete"],
+    "purchaseOrder": ["show", "edit", "add", "delete"],
     "deliveryChallan": ["show", "add", "view", "cancel"],
     "reports": ["show"],
     // Shared
