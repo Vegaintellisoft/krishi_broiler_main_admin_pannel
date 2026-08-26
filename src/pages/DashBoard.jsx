@@ -34,19 +34,8 @@ const DashBoard = () => {
   const [truckStatusData, setTruckStatusData] = useState([]);
   const [truckChartData, setTruckChartData] = useState([]);
   const [monthChartData, setMonthChartData] = useState([]);
-  const [reportData, setReportData] = useState({
-  summary: {},
-  farmActivity: [],
-  billSupply: [],
-  shedReady: [],
-  issueMedicine: []
-});
-
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
-
-
-
 
   const getTruckStatus = async (from, to) => {
     try {
@@ -66,7 +55,6 @@ const DashBoard = () => {
       console.log("Server Error: ", error);
     }
   };
-
 
   const fetchDashboardData = async (from, to) => {
     setIsScreenLoading(true);
@@ -101,44 +89,19 @@ const DashBoard = () => {
     }
   };
 
-  const getFarmReport = async () => {
-  try {
+  useEffect(() => {
+    fetchDashboardData(fromDate, toDate);
+    getTruckStatus(fromDate, toDate);
+  }, []);
 
-const { data } = await axios.get(
-  "admin/farm-activity-report"
-);
-
-console.log("Farm Report Response:", data);
-    console.log("Farm Report API:", data);
-
-if (data?.status === true) {
-  console.log("Setting report data", data.data);
-  setReportData(data.data);
-}
-
-  } catch (error) {
-    console.log(error);
-  }
-};
-
-
-useEffect(() => {
-  fetchDashboardData(fromDate, toDate);
-  getTruckStatus(fromDate, toDate);
-  getFarmReport();
-
-  const interval = setInterval(() => {
-    getFarmReport();
-  }, 30000); // refresh every 30 seconds
-
-  return () => clearInterval(interval);
-}, []);
   const [searchText, setSearchText] = useState('');
 
   const filteredTruckStatusData = truckStatusData.filter(
     (item) =>
-      item.supplier_name.toLowerCase().includes(searchText) ||
-      item.material_names.toLowerCase().includes(searchText)
+      (item.supplier_name && item.supplier_name.toLowerCase().includes(searchText)) ||
+      (item.material_names && item.material_names.toLowerCase().includes(searchText)) ||
+      (item.po_no && item.po_no.toLowerCase().includes(searchText)) ||
+      (item.rr_no && item.rr_no.toLowerCase().includes(searchText))
   );
 
   // Pagination states
@@ -339,117 +302,8 @@ useEffect(() => {
 
 
 
-<div className="bg-white mx-3 rounded-lg shadow-md mt-5 p-4">
-
-  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mx-3 mt-5">
-
-  {/* Farm Activity */}
-  <div className="bg-white rounded-lg shadow-md p-4">
-    <h2 className="font-semibold text-lg mb-3">
-      Farm Activity ({reportData.summary?.farmActivity || 0})
-    </h2>
-
-    <table className="w-full">
-      <thead>
-        <tr>
-          <th className="text-left">Plant</th>
-          <th className="text-left">Entries</th>
-        </tr>
-      </thead>
-
-      <tbody>
-        {reportData?.farmActivity?.map((item,index)=>(
-          <tr key={index}>
-            <td>{item.plant}</td>
-            <td>{item.entries}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
-
-  {/* Bill Supply */}
-  <div className="bg-white rounded-lg shadow-md p-4">
-    <h2 className="font-semibold text-lg mb-3">
-      Bill Supply ({reportData.summary?.billSupply || 0})
-    </h2>
-
-    <table className="w-full">
-      <thead>
-        <tr>
-          <th className="text-left">Plant</th>
-          <th className="text-left">Entries</th>
-        </tr>
-      </thead>
-
-      <tbody>
-        {reportData?.billSupply?.map((item,index)=>(
-          <tr key={index}>
-            <td>{item.plant}</td>
-            <td>{item.entries}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
-
-  {/* Shed Ready */}
-  <div className="bg-white rounded-lg shadow-md p-4">
-    <h2 className="font-semibold text-lg mb-3">
-      Shed Ready ({reportData.summary?.shedReady || 0})
-    </h2>
-
-    <table className="w-full">
-      <thead>
-        <tr>
-          <th className="text-left">Plant</th>
-          <th className="text-left">Entries</th>
-        </tr>
-      </thead>
-
-      <tbody>
-        {reportData?.shedReady?.map((item,index)=>(
-          <tr key={index}>
-            <td>{item.plant}</td>
-            <td>{item.entries}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
-
-  {/* Issue Medicine */}
-  <div className="bg-white rounded-lg shadow-md p-4">
-    <h2 className="font-semibold text-lg mb-3">
-      Issue Medicine ({reportData.summary?.issueMedicine || 0})
-    </h2>
-
-    <table className="w-full">
-      <thead>
-        <tr>
-          <th className="text-left">Branch</th>
-          <th className="text-left">Entries</th>
-        </tr>
-      </thead>
-
-      <tbody>
-        {reportData?.issueMedicine?.map((item,index)=>(
-          <tr key={index}>
-            <td>{item.branch}</td>
-            <td>{item.entries}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
-
-</div>
-
-
-</div>
-
       {/* Truck Status Overview (Table) */}
-      <div className="bg-white mx-3 rounded-lg shadow-md mt-5 p-4">
+      <div className="bg-white mx-3 rounded-lg shadow-md mt-6 p-4">
         <div className="flex justify-between items-center mb-2">
           <h2 className="text-xl font-semibold">Delivery Status Overview</h2>
           <input
@@ -468,43 +322,50 @@ useEffect(() => {
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">PO No.</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Supplier</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Material(s)</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Loaded</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Arrived</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pending</th>
+                <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {paginatedData.length > 0 ? (
                 paginatedData.map((item, index) => (
-                  <tr key={index}>
-                    <td className="px-6 py-4 text-sm">{item.rr_no}</td>
-                    <td className="px-6 py-4 text-sm">{item.po_no}</td>
-                    <td className="px-6 py-4 text-sm">{item.supplier_name}</td>
-                    <td className="px-6 py-4 text-sm">{item.material_names}</td>
+                  <tr key={index} className="hover:bg-gray-50 transition">
+                    <td className="px-6 py-4 text-sm font-medium text-gray-900">{item.rr_no}</td>
+                    <td className="px-6 py-4 text-sm text-gray-600">{item.po_no}</td>
+                    <td className="px-6 py-4 text-sm text-gray-700">{item.supplier_name}</td>
+                    <td className="px-6 py-4 text-sm text-gray-800 font-medium">{item.material_names || '-'}</td>
 
-                    <td className="px-6 py-4 text-sm">
-                      <span className="w-8 h-8 rounded-full justify-center items-center text-sm inline-flex font-semibold  bg-blue-100 text-blue-800">
-                        {item.loaded}
+                    <td className="px-6 py-4 text-sm text-center">
+                      <span
+                        className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full ${
+                          item.status === 1 || item.status === '1' || String(item.status).toLowerCase() === 'pending'
+                            ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                            : item.status === 2 || item.status === '2' || String(item.status).toLowerCase() === 'in-transit'
+                              ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                              : item.status === 3 || item.status === '3' || String(item.status).toLowerCase() === 'active' || String(item.status).toLowerCase() === 'completed'
+                                ? 'bg-green-100 text-green-700 border border-green-200'
+                                : item.status === 4 || item.status === '4' || String(item.status).toLowerCase() === 'close' || String(item.status).toLowerCase() === 'closed'
+                                  ? 'bg-red-100 text-red-700 border border-red-200'
+                                  : 'bg-gray-100 text-gray-700 border border-gray-200'
+                        }`}
+                      >
+                        {item.status === 1 || item.status === '1' || String(item.status).toLowerCase() === 'pending'
+                          ? 'Pending'
+                          : item.status === 2 || item.status === '2' || String(item.status).toLowerCase() === 'in-transit'
+                            ? 'In-Transit'
+                            : item.status === 3 || item.status === '3' || String(item.status).toLowerCase() === 'active' || String(item.status).toLowerCase() === 'completed'
+                              ? 'Active'
+                              : item.status === 4 || item.status === '4' || String(item.status).toLowerCase() === 'close' || String(item.status).toLowerCase() === 'closed'
+                                ? 'Closed'
+                                : typeof item.status === 'string' && item.status
+                                  ? item.status.charAt(0).toUpperCase() + item.status.slice(1)
+                                  : 'Pending'}
                       </span>
                     </td>
-
-                    <td className="px-6 py-4 text-sm">
-                      <span className="w-8 h-8 rounded-full justify-center items-center text-sm inline-flex font-semibold  bg-green-100 text-green-800">
-                        {item.arrived}
-                      </span>
-                    </td>
-
-                    <td className="px-6 py-4 text-sm">
-                      <span className="w-8 h-8 rounded-full justify-center items-center text-sm inline-flex font-semibold  bg-yellow-100 text-yellow-800">
-                        {item.pending}
-                      </span>
-                    </td>
-
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="7" className="px-6 py-4 text-center text-sm text-gray-500">No truck status data available.</td>
+                  <td colSpan="5" className="px-6 py-4 text-center text-sm text-gray-500">No delivery status data available.</td>
                 </tr>
               )}
             </tbody>

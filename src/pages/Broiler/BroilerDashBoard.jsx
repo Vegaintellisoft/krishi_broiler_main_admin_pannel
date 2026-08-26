@@ -32,6 +32,12 @@ const BroilerDashBoard = () => {
   const [farmActivityLoading, setFarmActivityLoading] = useState(false);
   const [farmActivityError, setFarmActivityError] = useState(null);
 
+  // Login History expanded states
+  const [expandedLoginRow, setExpandedLoginRow] = useState(null);
+  const [loginDetailsData, setLoginDetailsData] = useState(null);
+  const [loginDetailsLoading, setLoginDetailsLoading] = useState(false);
+  const [loginDetailsError, setLoginDetailsError] = useState(null);
+
   // Filter states
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -136,6 +142,38 @@ const BroilerDashBoard = () => {
     }
   };
 
+  const fetchLoginDetails = async (date) => {
+    setLoginDetailsLoading(true);
+    setLoginDetailsData(null);
+    setLoginDetailsError(null);
+    try {
+      const { data } = await axios.get('/admin/broiler-login-details', {
+        params: { date, period }
+      });
+      if (data.status && data.data) {
+        setLoginDetailsData(data.data);
+      } else {
+        setLoginDetailsError(data.message || 'No login details returned from server.');
+      }
+    } catch (err) {
+      console.error("Error fetching login details:", err);
+      setLoginDetailsError(err?.response?.data?.message || err.message || 'Failed to load login details.');
+    } finally {
+      setLoginDetailsLoading(false);
+    }
+  };
+
+  const handleLoginRowExpand = (rowKey, row) => {
+    if (expandedLoginRow === rowKey) {
+      setExpandedLoginRow(null);
+      setLoginDetailsData(null);
+      setLoginDetailsError(null);
+    } else {
+      setExpandedLoginRow(rowKey);
+      fetchLoginDetails(row.period_date);
+    }
+  };
+
   // Search filtering
   const filteredReportData = reportDetails.filter(
     (item) =>
@@ -169,8 +207,7 @@ const BroilerDashBoard = () => {
   const handleExportLogins = () => {
     const exportData = loginDetails.map(item => ({
       "Period Date": item.period_date,
-      "Total Logins": item.login_count,
-      "Unique User Count": item.user_count
+      "Total Logins": item.login_count
     }));
     ExcelExport(exportData, `Broiler_Logins_Report_${period}_${fromDate}_to_${toDate}.xlsx`);
   };
@@ -278,7 +315,7 @@ const BroilerDashBoard = () => {
       </div>
 
       {/* KPI Cards Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         {/* Total Entries */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 transition-all duration-300 hover:shadow-md hover:-translate-y-1 flex items-center justify-between">
           <div className="space-y-2">
@@ -308,22 +345,10 @@ const BroilerDashBoard = () => {
           <div className="space-y-2">
             <p className="text-sm font-semibold text-gray-400 uppercase tracking-wider">Total Logins</p>
             <h3 className="text-3xl font-bold text-gray-900">{summary?.total_logins || 0}</h3>
-            <p className="text-xs text-blue-500 font-medium">Login sessions logged</p>
+            <p className="text-xs text-blue-500 font-medium">Mobile login sessions logged</p>
           </div>
           <div className="p-4 bg-blue-50 text-blue-500 rounded-2xl">
             <FiLogIn className="h-6 w-6" />
-          </div>
-        </div>
-
-        {/* Unique Logins */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 transition-all duration-300 hover:shadow-md hover:-translate-y-1 flex items-center justify-between">
-          <div className="space-y-2">
-            <p className="text-sm font-semibold text-gray-400 uppercase tracking-wider">LoggedIn Users</p>
-            <h3 className="text-3xl font-bold text-gray-900">{summary?.unique_login_users || 0}</h3>
-            <p className="text-xs text-pink-500 font-medium">Distinct logins in period</p>
-          </div>
-          <div className="p-4 bg-pink-50 text-pink-500 rounded-2xl">
-            <FiActivity className="h-6 w-6" />
           </div>
         </div>
       </div>
@@ -742,30 +767,130 @@ const BroilerDashBoard = () => {
             <thead>
               <tr className="bg-gray-50 text-gray-500 font-semibold text-xs text-left">
                 <th className="px-6 py-4 rounded-l-xl">Period Date</th>
-                <th className="px-6 py-4 text-center">Total Logins</th>
-                <th className="px-6 py-4 text-center rounded-r-xl">Unique Logged-In Users</th>
+                <th className="px-6 py-4 text-center rounded-r-xl">Total Logins</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-sm text-gray-700">
               {paginatedLoginData.length > 0 ? (
-                paginatedLoginData.map((row, idx) => (
-                  <tr key={idx} className="hover:bg-gray-50 transition-all">
-                    <td className="px-6 py-4 font-semibold text-gray-900">{row.period_date}</td>
-                    <td className="px-6 py-4 text-center">
-                      <span className="px-3 py-1 bg-blue-50 text-blue-600 font-bold rounded-full text-xs">
-                        {row.login_count}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <span className="px-3 py-1 bg-pink-50 text-pink-600 font-bold rounded-full text-xs">
-                        {row.user_count}
-                      </span>
-                    </td>
-                  </tr>
-                ))
+                paginatedLoginData.map((row, idx) => {
+                  const rowKey = `login-${row.period_date}-${idx}`;
+                  const isExpanded = expandedLoginRow === rowKey;
+                  return (
+                    <React.Fragment key={idx}>
+                      <tr
+                        className={`hover:bg-gray-50 transition-all cursor-pointer ${isExpanded ? 'bg-orange-50/40' : ''}`}
+                        onClick={() => handleLoginRowExpand(rowKey, row)}
+                      >
+                        <td className="px-6 py-4 font-semibold text-gray-900 flex items-center gap-2">
+                          <span className={`p-1 rounded-md transition-colors ${isExpanded ? 'bg-orange-100 text-orange-600' : 'text-gray-400'}`}>
+                            {isExpanded ? <FiChevronUp size={14} /> : <FiChevronDown size={14} />}
+                          </span>
+                          <span>{row.period_date}</span>
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <span
+                            className="px-4 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 font-bold rounded-full text-xs cursor-pointer inline-flex items-center gap-1.5 transition-all shadow-2xs"
+                            title="Click to view logged in user details"
+                          >
+                            <span>{row.login_count}</span>
+                            <span className="text-[10px] text-blue-400 font-normal">logins</span>
+                          </span>
+                        </td>
+                      </tr>
+
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan="2" className="p-0">
+                            <div className="bg-gradient-to-br from-blue-50/50 to-indigo-50/30 border-t border-b border-blue-100 px-6 py-5">
+                              {loginDetailsLoading ? (
+                                <div className="flex items-center justify-center py-8 gap-2">
+                                  <LuRefreshCw className="animate-spin text-blue-500" size={18} />
+                                  <span className="text-sm text-gray-500 font-medium">Loading logged-in user details...</span>
+                                </div>
+                              ) : loginDetailsError ? (
+                                <div className="flex items-center gap-2 py-4 px-4 bg-red-50 rounded-xl border border-red-100 text-red-600 text-xs font-semibold">
+                                  <span>⚠ Error: {loginDetailsError}</span>
+                                </div>
+                              ) : loginDetailsData ? (
+                                <div className="space-y-4">
+                                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                                    <h4 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                                      <FiUsers className="text-blue-500" size={16} />
+                                      <span>Logged-In Users on {loginDetailsData.date}</span>
+                                      <span className="ml-1 px-2.5 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[11px] font-extrabold">
+                                        {loginDetailsData.total_logins} Total Logins
+                                      </span>
+                                    </h4>
+                                  </div>
+
+                                  {/* Logged in users table */}
+                                  <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm bg-white">
+                                    <table className="min-w-full text-xs">
+                                      <thead>
+                                        <tr className="bg-gray-50 text-gray-600 font-semibold text-[11px] uppercase tracking-wider border-b border-gray-200">
+                                          <th className="px-6 py-3 text-center w-14">#</th>
+                                          <th className="px-6 py-3 text-left">User</th>
+                                          <th className="px-6 py-3 text-left">Role</th>
+                                          <th className="px-6 py-3 text-left">Plant / Branch</th>
+                                          <th className="px-6 py-3 text-left">Login Time</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-gray-100">
+                                        {loginDetailsData.allLogins && loginDetailsData.allLogins.length > 0 ? (
+                                          loginDetailsData.allLogins.map((item, uIdx) => (
+                                            <tr key={uIdx} className="hover:bg-blue-50/40 transition-colors">
+                                              <td className="px-6 py-3.5 text-center font-bold text-gray-400">
+                                                {uIdx + 1}
+                                              </td>
+                                              <td className="px-6 py-3.5">
+                                                <div className="font-bold text-gray-900">{item.fullname || item.username}</div>
+                                                <div className="text-[10px] text-gray-400 font-mono">@{item.username}</div>
+                                              </td>
+                                              <td className="px-6 py-3.5">
+                                                <span className="px-3 py-1 bg-gray-100 text-gray-700 font-semibold rounded-md text-[11px]">
+                                                  {item.role || 'Supervisor'}
+                                                </span>
+                                              </td>
+                                              <td className="px-6 py-3.5">
+                                                {item.plant_name && item.plant_name !== '-' ? (
+                                                  <span className="px-2.5 py-0.5 bg-orange-50 text-orange-700 border border-orange-200 font-semibold rounded-md text-[11px]">
+                                                    {item.plant_name}
+                                                  </span>
+                                                ) : (
+                                                  <span className="text-gray-400 font-medium">-</span>
+                                                )}
+                                              </td>
+                                              <td className="px-6 py-3.5 text-gray-800 font-semibold whitespace-nowrap">
+                                                {item.login_time
+                                                  ? new Date(item.login_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })
+                                                  : item.time_only || '-'}
+                                              </td>
+                                            </tr>
+                                          ))
+                                        ) : (
+                                          <tr>
+                                            <td colSpan="5" className="px-6 py-6 text-center text-gray-400 font-medium">
+                                              No login logs found for this date.
+                                            </td>
+                                          </tr>
+                                        )}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-center py-6 text-gray-400 text-sm">No login data available.</div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })
               ) : (
                 <tr>
-                  <td colSpan="3" className="px-6 py-8 text-center text-gray-400 font-medium">
+                  <td colSpan="2" className="px-6 py-8 text-center text-gray-400 font-medium">
                     No login logs recorded in this period.
                   </td>
                 </tr>
