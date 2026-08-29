@@ -50,8 +50,10 @@ const POMaster = () => {
     bill_no: "",
     materials: [],
     rr_no: "",
-    status: 1
-
+    status: 1,
+    po_date: "",
+    rr_date: "",
+    supplier_invoice_date: ""
   });
 
   const fetchDropdownData = async () => {
@@ -131,12 +133,15 @@ const POMaster = () => {
     try {
 
       setFormData({
-        po_no: item.po_no,
-        supplier_id: item.supplier__id,
-        bill_no: item.bill_no,
+        po_no: item.po_no || "",
+        supplier_id: item.supplier__id || "",
+        bill_no: item.bill_no || "",
         materials: [],
-        rr_no: item.rr_no,
-        status: item.status
+        rr_no: item.rr_no || "",
+        status: item.status !== undefined ? item.status : 1,
+        po_date: item.po_date || "",
+        rr_date: item.rr_date || "",
+        supplier_invoice_date: item.supplier_invoice_date || ""
       });
 
       setUpdatePoId(item.id)
@@ -258,12 +263,15 @@ const POMaster = () => {
     setIsSubmitLoading(true)
 
     const trimmedFormData = {
-      po_no: formData.po_no.trim(),
-      rr_no: formData.rr_no.trim(),
-      bill_no: formData.bill_no.trim(),
+      po_no: formData.po_no ? formData.po_no.trim() : "",
+      rr_no: formData.rr_no ? formData.rr_no.trim() : "",
+      bill_no: formData.bill_no ? formData.bill_no.trim() : "",
       supplier__id: formData.supplier_id,
       materials: materialList,
-      status: formData.status
+      status: formData.status,
+      po_date: formData.po_date || null,
+      rr_date: formData.rr_date || null,
+      supplier_invoice_date: formData.supplier_invoice_date || null
     };
 
     // Validation
@@ -347,10 +355,11 @@ const POMaster = () => {
       bill_no: "",
       materials: [],
       rr_no: "",
-      status: 1
+      status: 1,
+      po_date: "",
+      rr_date: "",
+      supplier_invoice_date: ""
     });
-
-
   }
 
 
@@ -425,6 +434,40 @@ const POMaster = () => {
                   type="text"
                   name="rr_no"
                   value={formData.rr_no}
+                  className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  onChange={(e) => setFormData(prev => ({ ...prev, rr_no: e.target.value }))}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Supplier Inv Date</label>
+                <input
+                  type="date"
+                  name="supplier_invoice_date"
+                  value={formData.supplier_invoice_date || ""}
+                  onChange={(e) => setFormData(prev => ({ ...prev, supplier_invoice_date: e.target.value }))}
+                  className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">PO Date</label>
+                <input
+                  type="date"
+                  name="po_date"
+                  value={formData.po_date || ""}
+                  onChange={(e) => setFormData(prev => ({ ...prev, po_date: e.target.value }))}
+                  className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">RR Date</label>
+                <input
+                  type="date"
+                  name="rr_date"
+                  value={formData.rr_date || ""}
+                  onChange={(e) => setFormData(prev => ({ ...prev, rr_date: e.target.value }))}
                   className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                 />
               </div>
@@ -669,6 +712,7 @@ const POMaster = () => {
                 <th className="p-4 text-center text-sm text-black">PO No</th>
                 <th className="p-4 text-center text-sm text-black">Supplier Name</th>
                 <th className="p-4 text-center text-sm text-black">Bill No</th>
+                <th className="p-4 text-center text-sm text-black">Supplier Inv Date</th>
                 <th className="p-4 text-center text-sm text-black">RR No</th>
                 <th className="p-4 text-center text-sm text-black">Status</th>
                 <th className="p-4 text-center text-sm text-black">Materials</th>
@@ -685,6 +729,7 @@ const POMaster = () => {
                   <td className="p-4 text-sm opacity-65">{item.po_no}</td>
                   <td className="p-4 text-sm w-[20%] opacity-65">{item.supplier_name}</td>
                   <td className="p-4 text-sm opacity-65">{item.bill_no}</td>
+                  <td className="p-4 text-sm opacity-65">{item.supplier_invoice_date || '-'}</td>
                   <td className="p-4 text-sm opacity-65">{item.rr_no}</td>
                   {/* <td className="p-4 text-sm opacity-65">{item.st}</td> */}
 

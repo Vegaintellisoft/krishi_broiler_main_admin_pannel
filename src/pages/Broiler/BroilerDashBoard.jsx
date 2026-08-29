@@ -15,7 +15,7 @@ import {
 import ExcelExport from '../../utils/ExcelExport';
 import { RiSearchLine } from 'react-icons/ri';
 import { LuImport, LuRefreshCw } from 'react-icons/lu';
-import { FiUsers, FiFileText, FiLogIn, FiActivity, FiChevronDown, FiChevronUp } from 'react-icons/fi';
+import { FiUsers, FiFileText, FiLogIn, FiActivity, FiChevronDown, FiChevronUp, FiImage, FiExternalLink, FiDownload, FiX, FiAlertCircle } from 'react-icons/fi';
 
 const BroilerDashBoard = () => {
   const [loading, setLoading] = useState(false);
@@ -43,6 +43,129 @@ const BroilerDashBoard = () => {
   const [toDate, setToDate] = useState('');
   const [period, setPeriod] = useState('daily');
   const [searchText, setSearchText] = useState('');
+
+  // Photo modal state supporting Mortality, Start KM, and End KM tabs
+  const [photoModal, setPhotoModal] = useState(null);
+  const [activePhotoIdx, setActivePhotoIdx] = useState(0);
+  const [imageError, setImageError] = useState(false);
+
+  const backendBaseUrl = (import.meta.env.VITE_SERVER_URL || 'http://localhost:4010/api').replace(/\/api\/?$/, '');
+
+  const normalizePhotosList = (raw, defaultName = 'photo.jpg') => {
+    if (typeof raw === 'string') {
+      try { raw = JSON.parse(raw); } catch (_) { raw = raw ? [raw] : []; }
+    }
+    if (raw && !Array.isArray(raw) && typeof raw === 'object') raw = [raw];
+    else if (!Array.isArray(raw)) raw = raw ? [raw] : [];
+
+    return (raw || []).map(p => {
+      if (!p) return null;
+      if (typeof p === 'string') {
+        let url = p;
+        if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('data:')) {
+          url = `${backendBaseUrl}/${url.replace(/^\/+/, '')}`;
+        }
+        return { url, name: p.split('/').pop() || defaultName };
+      }
+      if (typeof p === 'object') {
+        let photoUrl = '';
+        if (p.base64) {
+          photoUrl = p.base64.startsWith('data:') ? p.base64 : `data:image/jpeg;base64,${p.base64}`;
+        } else if (p.url && (p.url.startsWith('http://') || p.url.startsWith('https://') || p.url.startsWith('data:'))) {
+          // If URL has an unreachable IP like 192.168.5.224, rewrite it with active backendBaseUrl
+          if (p.url.includes('/uploads/broiler/')) {
+            const fname = p.url.split('/uploads/broiler/').pop();
+            photoUrl = `${backendBaseUrl}/uploads/broiler/${fname}`;
+          } else {
+            photoUrl = p.url;
+          }
+        } else if (p.fileName) {
+          photoUrl = `${backendBaseUrl}/uploads/broiler/${p.fileName}`;
+        } else if (p.url) {
+          photoUrl = `${backendBaseUrl}/${p.url.replace(/^\/+/, '')}`;
+        } else if (p.uri && (p.uri.startsWith('http://') || p.uri.startsWith('https://') || p.uri.startsWith('data:'))) {
+          photoUrl = p.uri;
+        }
+
+        return {
+          ...p,
+          url: photoUrl,
+          name: p.fileName || p.name || (photoUrl ? photoUrl.split('/').pop() : defaultName),
+          fileSize: p.fileSize || p.size,
+          width: p.width,
+          height: p.height,
+          type: p.type || 'image/jpeg',
+          uri: p.uri || null,
+        };
+      }
+      return null;
+    }).filter(Boolean);
+  };
+
+  const openPhotoModal = (entry, initialTab = null) => {
+    // 1. Mortality photos
+    let mortalityPhotos = entry.photos && Array.isArray(entry.photos) && entry.photos.length > 0
+      ? normalizePhotosList(entry.photos, 'mortality_photo.jpg')
+      : normalizePhotosList(entry.upload_mortality, 'mortality_photo.jpg');
+    if (!mortalityPhotos.length && entry.photo_url) {
+      mortalityPhotos = normalizePhotosList([entry.photo_url], 'mortality_photo.jpg');
+    }
+
+    // 2. Start KM photos
+    let startKmPhotos = entry.start_km_photos && Array.isArray(entry.start_km_photos) && entry.start_km_photos.length > 0
+      ? normalizePhotosList(entry.start_km_photos, 'start_km_photo.jpg')
+      : normalizePhotosList(entry.upload_start_km, 'start_km_photo.jpg');
+    if (!startKmPhotos.length && (entry.start_km_photo_url || farmActivityDetails?.trip?.start_km_photos)) {
+      startKmPhotos = normalizePhotosList(entry.start_km_photo_url || farmActivityDetails?.trip?.start_km_photos, 'start_km_photo.jpg');
+    }
+
+    // 3. End KM photos
+    let endKmPhotos = entry.end_km_photos && Array.isArray(entry.end_km_photos) && entry.end_km_photos.length > 0
+      ? normalizePhotosList(entry.end_km_photos, 'end_km_photo.jpg')
+      : normalizePhotosList(entry.upload_end_km, 'end_km_photo.jpg');
+    if (!endKmPhotos.length && (entry.end_km_photo_url || farmActivityDetails?.trip?.end_km_photos)) {
+      endKmPhotos = normalizePhotosList(entry.end_km_photo_url || farmActivityDetails?.trip?.end_km_photos, 'end_km_photo.jpg');
+    }
+
+    const startKmVal = entry.start_km || farmActivityDetails?.trip?.start_km || null;
+    const endKmVal = entry.end_km || farmActivityDetails?.trip?.end_km || null;
+    const vehicleVal = entry.vehicle_no || farmActivityDetails?.trip?.vehicle_no || null;
+
+    let chosenTab = initialTab;
+    if (!chosenTab) {
+      if (mortalityPhotos.length > 0) chosenTab = 'mortality';
+      else if (startKmPhotos.length > 0) chosenTab = 'start_km';
+      else if (endKmPhotos.length > 0) chosenTab = 'end_km';
+      else chosenTab = 'mortality';
+    }
+
+    setPhotoModal({
+      entry,
+      activeTab: chosenTab,
+      mortalityPhotos,
+      startKmPhotos,
+      endKmPhotos,
+      startKm: startKmVal,
+      endKm: endKmVal,
+      vehicleNo: vehicleVal
+    });
+    setActivePhotoIdx(0);
+    setImageError(false);
+  };
+
+  const handleSwitchPhotoTab = (tabKey) => {
+    if (photoModal) {
+      setPhotoModal(prev => ({ ...prev, activeTab: tabKey }));
+      setActivePhotoIdx(0);
+      setImageError(false);
+    }
+  };
+
+  const closePhotoModal = () => {
+    setPhotoModal(null);
+    setActivePhotoIdx(0);
+    setImageError(false);
+  };
 
   // Pagination states for main report
   const [currentPage, setCurrentPage] = useState(1);
@@ -533,6 +656,7 @@ const BroilerDashBoard = () => {
                                       Farm Activity Entries — {farmActivityDetails.plant_name}
                                       <span className="ml-1 px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full text-[10px] font-bold">{farmActivityDetails.summary.total_entries} entries · {farmActivityDetails.summary.unique_farmers} farmers</span>
                                     </h4>
+
                                     <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
                                       <table className="min-w-full text-xs">
                                         <thead>
@@ -543,6 +667,7 @@ const BroilerDashBoard = () => {
                                             <th className="px-3 py-2.5 text-center">Housed</th>
                                             <th className="px-3 py-2.5 text-center">Stock</th>
                                             <th className="px-3 py-2.5 text-center">Mortality</th>
+                                            <th className="px-3 py-2.5 text-center">Photo</th>
                                             <th className="px-3 py-2.5 text-center">Cum Mort %</th>
                                             <th className="px-3 py-2.5 text-center">Body Wt</th>
                                             <th className="px-3 py-2.5 text-center">Farm Maint.</th>
@@ -585,6 +710,35 @@ const BroilerDashBoard = () => {
                                                   <span className={`px-2 py-0.5 rounded-full font-semibold ${Number(entry.mortality) > 0 ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-500'}`}>
                                                     {entry.mortality || '0'}
                                                   </span>
+                                                </td>
+                                                {/* Farm Activity Photo Column */}
+                                                <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                                                  {((entry.photos && entry.photos.length > 0) || entry.upload_mortality || entry.photo_url || 
+                                                    (entry.start_km_photos && entry.start_km_photos.length > 0) || entry.upload_start_km || entry.start_km_photo_url ||
+                                                    (entry.end_km_photos && entry.end_km_photos.length > 0) || entry.upload_end_km || entry.end_km_photo_url) ? (
+                                                    <button
+                                                      type="button"
+                                                      onClick={(e) => { e.stopPropagation(); openPhotoModal(entry); }}
+                                                      className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 hover:text-amber-900 border border-amber-200/80 rounded-lg font-semibold text-[11px] inline-flex items-center gap-1.5 transition-all shadow-2xs hover:shadow-xs group cursor-pointer"
+                                                      title="Click to view farm activity photos (Mortality, Start KM, End KM)"
+                                                    >
+                                                      <FiImage className="text-amber-600 group-hover:scale-110 transition-transform" size={13} />
+                                                      <span>View Photo</span>
+                                                      {(() => {
+                                                        const mCount = entry.photos?.length || (entry.upload_mortality ? 1 : 0);
+                                                        const sCount = entry.start_km_photos?.length || (entry.upload_start_km ? 1 : 0);
+                                                        const eCount = entry.end_km_photos?.length || (entry.upload_end_km ? 1 : 0);
+                                                        const total = mCount + sCount + eCount;
+                                                        return total > 1 ? (
+                                                          <span className="ml-0.5 px-1 py-0.2 bg-amber-200 text-amber-800 rounded-full text-[9px] font-bold">
+                                                            {total}
+                                                          </span>
+                                                        ) : null;
+                                                      })()}
+                                                    </button>
+                                                  ) : (
+                                                    <span className="text-gray-300 font-medium">-</span>
+                                                  )}
                                                 </td>
                                                 <td className="px-3 py-2.5 text-center text-gray-600">{entry.cum_mortality_percentage || '-'}%</td>
                                                 <td className="px-3 py-2.5 text-center">
@@ -655,7 +809,7 @@ const BroilerDashBoard = () => {
                                             ))
                                           ) : (
                                             <tr>
-                                              <td colSpan="17" className="px-4 py-6 text-center text-gray-400 font-medium">
+                                              <td colSpan="18" className="px-4 py-6 text-center text-gray-400 font-medium">
                                                 No farm activity entries found for this date and plant.
                                               </td>
                                             </tr>
@@ -920,6 +1074,293 @@ const BroilerDashBoard = () => {
           </div>
         )}
       </div>
+
+      {/* Photo Viewer Modal with Mortality, Start KM, and End KM Tabs */}
+      {photoModal && (() => {
+        const currentPhotosList = (photoModal.activeTab === 'start_km' 
+          ? photoModal.startKmPhotos 
+          : photoModal.activeTab === 'end_km' 
+          ? photoModal.endKmPhotos 
+          : photoModal.mortalityPhotos) || [];
+        
+        const currentPhoto = currentPhotosList[activePhotoIdx] || currentPhotosList[0] || null;
+        const currentUrl = currentPhoto?.url || currentPhoto?.uri || null;
+
+        const isStartKm = photoModal.activeTab === 'start_km';
+        const isEndKm = photoModal.activeTab === 'end_km';
+        const isMortality = photoModal.activeTab === 'mortality';
+
+        return (
+          <div 
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs"
+            onClick={closePhotoModal}
+          >
+            <div 
+              className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[90vh] border border-gray-100 font-poppins"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Modal Header */}
+              <div className={`flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gradient-to-r ${
+                isStartKm ? 'from-blue-50/90 to-sky-50/60' :
+                isEndKm ? 'from-green-50/90 to-emerald-50/60' :
+                'from-orange-50/90 to-amber-50/60'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <div className={`p-2.5 text-white rounded-xl shadow-xs ${
+                    isStartKm ? 'bg-blue-600' :
+                    isEndKm ? 'bg-green-600' :
+                    'bg-orange-500'
+                  }`}>
+                    <FiImage size={20} />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-gray-900 text-base leading-tight">
+                      {isStartKm ? 'Start KM Photo' : isEndKm ? 'End KM Photo' : 'Mortality Photo'}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {photoModal.entry.farmer_name || photoModal.entry.farmer || 'Farmer Entry'}
+                      {photoModal.entry.batch ? ` · Batch #${photoModal.entry.batch}` : ''}
+                      {isMortality && photoModal.entry.mortality !== undefined ? ` · ${photoModal.entry.mortality} Mortality` : ''}
+                      {isStartKm && photoModal.startKm ? ` · Start: ${photoModal.startKm} KM` : ''}
+                      {isEndKm && photoModal.endKm ? ` · End: ${photoModal.endKm} KM` : ''}
+                      {photoModal.vehicleNo && (isStartKm || isEndKm) ? ` · 🚗 ${photoModal.vehicleNo}` : ''}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={closePhotoModal}
+                  className="p-2 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition cursor-pointer"
+                  title="Close"
+                >
+                  <FiX size={20} />
+                </button>
+              </div>
+
+              {/* Modal Tabs Navigation Bar */}
+              <div className="px-6 py-2.5 bg-gray-50/90 border-b border-gray-200/70 flex items-center gap-2 overflow-x-auto">
+                {/* Mortality Tab */}
+                <button
+                  type="button"
+                  onClick={() => handleSwitchPhotoTab('mortality')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    isMortality
+                      ? 'bg-orange-500 text-white shadow-xs'
+                      : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
+                  }`}
+                >
+                  <span>Mortality Photo</span>
+                  {photoModal.mortalityPhotos?.length > 0 && (
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                      isMortality ? 'bg-orange-600 text-white' : 'bg-orange-100 text-orange-700'
+                    }`}>
+                      {photoModal.mortalityPhotos.length}
+                    </span>
+                  )}
+                </button>
+
+                {/* Start KM Tab */}
+                <button
+                  type="button"
+                  onClick={() => handleSwitchPhotoTab('start_km')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    isStartKm
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
+                  }`}
+                >
+                  <span>Start KM</span>
+                  {photoModal.startKm && (
+                    <span className={`text-[10px] font-semibold opacity-90 px-1 py-0.2 rounded ${isStartKm ? 'bg-blue-700 text-white' : 'bg-blue-50 text-blue-700'}`}>
+                      {photoModal.startKm}
+                    </span>
+                  )}
+                  {photoModal.startKmPhotos?.length > 0 && (
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                      isStartKm ? 'bg-blue-700 text-white' : 'bg-blue-100 text-blue-700'
+                    }`}>
+                      {photoModal.startKmPhotos.length}
+                    </span>
+                  )}
+                </button>
+
+                {/* End KM Tab */}
+                <button
+                  type="button"
+                  onClick={() => handleSwitchPhotoTab('end_km')}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                    isEndKm
+                      ? 'bg-green-600 text-white shadow-xs'
+                      : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
+                  }`}
+                >
+                  <span>End KM</span>
+                  {photoModal.endKm && (
+                    <span className={`text-[10px] font-semibold opacity-90 px-1 py-0.2 rounded ${isEndKm ? 'bg-green-700 text-white' : 'bg-green-50 text-green-700'}`}>
+                      {photoModal.endKm}
+                    </span>
+                  )}
+                  {photoModal.endKmPhotos?.length > 0 && (
+                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                      isEndKm ? 'bg-green-700 text-white' : 'bg-green-100 text-green-700'
+                    }`}>
+                      {photoModal.endKmPhotos.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="p-6 overflow-y-auto flex-1 flex flex-col items-center justify-center bg-gray-50/50 min-h-[320px]">
+                {currentPhotosList.length > 0 && currentPhoto ? (
+                  <div className="w-full flex flex-col items-center space-y-4">
+                    {/* Photo Display Frame */}
+                    <div className="relative w-full bg-slate-900/5 rounded-xl border border-gray-200 overflow-hidden flex items-center justify-center min-h-[260px] max-h-[480px]">
+                      {!imageError && currentUrl ? (
+                        <img
+                          src={currentUrl}
+                          alt={currentPhoto.name || "Photo"}
+                          onError={() => setImageError(true)}
+                          className="max-h-[460px] w-auto max-w-full object-contain rounded-lg shadow-xs"
+                        />
+                      ) : (
+                        <div className="p-8 text-center flex flex-col items-center justify-center space-y-2">
+                          <FiAlertCircle className={isStartKm ? 'text-blue-500' : isEndKm ? 'text-green-500' : 'text-amber-500'} size={36} />
+                          <p className="text-sm font-semibold text-gray-800">Photo Details Captured from Mobile App</p>
+                          <p className="text-xs text-gray-500 max-w-sm">
+                            File: <span className="font-mono text-[11px] text-gray-700 font-medium break-all">{currentPhoto.fileName || currentPhoto.name || currentPhoto.uri || 'photo.jpg'}</span>
+                          </p>
+                          {currentUrl && (
+                            <button
+                              onClick={() => window.open(currentUrl, '_blank')}
+                              className={`mt-2 px-3.5 py-1.5 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition shadow-xs cursor-pointer ${
+                                isStartKm ? 'bg-blue-600 hover:bg-blue-700' : isEndKm ? 'bg-green-600 hover:bg-green-700' : 'bg-orange-500 hover:bg-orange-600'
+                              }`}
+                            >
+                              <FiExternalLink size={14} /> Open Image Link
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Multiple Photos Thumbnails Strip */}
+                    {currentPhotosList.length > 1 && (
+                      <div className="flex items-center gap-2 overflow-x-auto p-1 max-w-full">
+                        {currentPhotosList.map((p, pIdx) => (
+                          <button
+                            key={pIdx}
+                            onClick={() => {
+                              setActivePhotoIdx(pIdx);
+                              setImageError(false);
+                            }}
+                            className={`p-1 border-2 rounded-lg transition overflow-hidden h-14 w-14 flex-shrink-0 bg-white cursor-pointer ${
+                              activePhotoIdx === pIdx 
+                                ? (isStartKm ? 'border-blue-500 shadow-sm' : isEndKm ? 'border-green-500 shadow-sm' : 'border-orange-500 shadow-sm') 
+                                : 'border-gray-200 opacity-70 hover:opacity-100'
+                            }`}
+                          >
+                            <img
+                              src={p.url || p.uri}
+                              alt={`thumb-${pIdx}`}
+                              className="w-full h-full object-cover rounded"
+                              onError={(e) => { e.target.style.display = 'none'; }}
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Photo Metadata Details */}
+                    <div className="w-full grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs bg-white p-3.5 rounded-xl border border-gray-200/80 shadow-2xs">
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-gray-400 block">File Name</span>
+                        <span className="font-medium text-gray-800 truncate block" title={currentPhoto.name || currentPhoto.fileName || '-'}>
+                          {currentPhoto.name || currentPhoto.fileName || (isStartKm ? 'start_km.jpg' : isEndKm ? 'end_km.jpg' : 'mortality.jpg')}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-gray-400 block">Reading / Info</span>
+                        <span className="font-medium text-gray-800 block">
+                          {isStartKm ? (photoModal.startKm ? `Start: ${photoModal.startKm} KM` : 'Start Odometer') :
+                           isEndKm ? (photoModal.endKm ? `End: ${photoModal.endKm} KM` : 'End Odometer') :
+                           `${photoModal.entry.mortality || 0} Mortality`}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-gray-400 block">File Size</span>
+                        <span className="font-medium text-gray-800 block">
+                          {currentPhoto.fileSize ? `${(currentPhoto.fileSize / 1024).toFixed(1)} KB` : (currentPhoto.width && currentPhoto.height ? `${currentPhoto.width} × ${currentPhoto.height}` : 'Standard')}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] uppercase font-bold text-gray-400 block">Recorded By</span>
+                        <span className="font-medium text-gray-800 truncate block">
+                          {photoModal.entry.user_display_name || '-'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-8 text-center flex flex-col items-center justify-center space-y-3 max-w-sm">
+                    <div className={`p-4 rounded-2xl ${
+                      isStartKm ? 'bg-blue-50 text-blue-500' :
+                      isEndKm ? 'bg-green-50 text-green-500' :
+                      'bg-amber-50 text-amber-500'
+                    }`}>
+                      <FiImage size={32} />
+                    </div>
+                    <p className="text-sm font-semibold text-gray-800">
+                      {isStartKm ? 'No Start KM Photo Attached' :
+                       isEndKm ? 'No End KM Photo Attached' :
+                       'No Mortality Photo Attached'}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {isStartKm ? (
+                        photoModal.startKm ? `Recorded Odometer: ${photoModal.startKm} KM (No image file attached)` : 'No start KM photo recorded for this trip.'
+                      ) : isEndKm ? (
+                        photoModal.endKm ? `Recorded Odometer: ${photoModal.endKm} KM (No image file attached)` : 'No end KM photo recorded for this trip.'
+                      ) : (
+                        `Recorded Mortality: ${photoModal.entry.mortality || 0} count (No photo uploaded).`
+                      )}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="flex items-center justify-between px-6 py-3.5 border-t border-gray-100 bg-white">
+                <div className="text-xs text-gray-400 font-medium">
+                  {currentPhotosList.length > 0 
+                    ? (currentPhotosList.length > 1 ? `Photo ${activePhotoIdx + 1} of ${currentPhotosList.length}` : '1 photo attached')
+                    : '0 photos in this tab'
+                  }
+                </div>
+                <div className="flex items-center gap-2">
+                  {currentUrl && (
+                    <button
+                      onClick={() => window.open(currentUrl, '_blank')}
+                      className={`px-3.5 py-1.5 border rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition shadow-2xs cursor-pointer ${
+                        isStartKm ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-200/80' :
+                        isEndKm ? 'bg-green-50 text-green-600 hover:bg-green-100 border-green-200/80' :
+                        'bg-orange-50 text-orange-600 hover:bg-orange-100 border-orange-200/80'
+                      }`}
+                    >
+                      <FiExternalLink size={13} />
+                      <span>Open in Tab</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={closePhotoModal}
+                    className="px-4 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-semibold transition cursor-pointer"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

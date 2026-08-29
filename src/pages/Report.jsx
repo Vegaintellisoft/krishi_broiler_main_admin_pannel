@@ -6,50 +6,77 @@ import { saveAs } from 'file-saver';
 import axios from 'axios';
 import Swal from 'sweetalert2';
 
+const COLUMNS = [
+  { key: 'row_index',        label: 'S.No.',                        width: 55 },
+  { key: 'po_no',            label: 'PO No.',                       width: 120 },
+  { key: 'po_date',          label: 'PO Dt.',                       width: 100 },
+  { key: 'rr_no',            label: 'RR No.',                       width: 140 },
+  { key: 'rr_date',          label: 'RR Date',                      width: 100 },
+  { key: 'supplier_code',    label: 'Supplier Code',                width: 110 },
+  { key: 'supplier_name',    label: 'Supplier Name',                width: 160 },
+  { key: 'supplier_inv_no',  label: 'Supplier Inv.No.',             width: 130 },
+  { key: 'supplier_inv_date',label: 'Supplier Inv. Dt.',            width: 110 },
+  { key: 'doc_no',           label: 'Delivery Challan No.',         width: 155 },
+  { key: 'doc_date',         label: 'Delivery Challan Dt.',         width: 135 },
+  { key: 'doc_time',         label: 'DC Generate Time',             width: 125 },
+  { key: 'dispatch_from',    label: 'Item Dispatch From (Goodshed)',width: 175 },
+  { key: 'branch_name',      label: 'Billed/Shipped To Branch',     width: 155 },
+  { key: 'branch_address',   label: 'Billed/Shipped To Address',    width: 200 },
+  { key: 'item_code',        label: 'Item Code',                    width: 100 },
+  { key: 'item_name',        label: 'Item Name',                    width: 130 },
+  { key: 'item_uom',         label: 'Item UOM',                     width: 90 },
+  { key: 'hsn_code',         label: 'Item HSN Code',                width: 115 },
+  { key: 'no_of_bags',       label: 'Qty (No. of Bags)',            width: 115 },
+  { key: 'quantity',         label: 'Qty (in MTS/KGS/NOS)',         width: 135 },
+  { key: 'item_rate',        label: 'Item Rate',                    width: 100 },
+  { key: 'tax_rate',         label: 'GST Tax Rate',                 width: 105 },
+  { key: 'taxable_value',    label: 'Taxable Value (Basic)',        width: 140 },
+  { key: 'cgst',             label: 'CGST',                         width: 85 },
+  { key: 'sgst',             label: 'SGST',                         width: 85 },
+  { key: 'gross',            label: 'Total',                        width: 100 },
+  { key: 'dc_status',        label: 'DC - Active or Cancelled',     width: 150 },
+  { key: 'dc_reason',        label: 'DC Cancelled Reason',          width: 145 },
+  { key: 'truck_no',         label: 'Vehicle No.',                  width: 110 },
+  { key: 'ewb_type',         label: 'E-Way Bill Type',              width: 120 },
+  { key: 'e_way_bill_no',    label: 'E-way Bill No.',               width: 130 },
+  { key: 'ewb_date',         label: 'E-Way Bill Date',              width: 120 },
+  { key: 'ewb_status',       label: 'E-Way Bill Active or Cancelled', width: 170 },
+  { key: 'ewb_reason',       label: 'E-Way Bill Cancelled Reason',  width: 170 },
+];
+
+// Numeric columns for totals row
+const TOTAL_COLS = new Set(['no_of_bags', 'quantity', 'taxable_value', 'cgst', 'sgst', 'gross']);
+
 export default function Report() {
-  const [isPageLoading, setIsPageLoading] = useState(false);
   const [isTableLoading, setIsTableLoading] = useState(true);
-  const [reportData, setReportData] = useState([]); // Single state for data from API
+  const [reportData, setReportData]         = useState([]);
+  const [isSapLoad, setIsSapLoad]           = useState(false);
+  const [search, setSearch]                 = useState('');
+  const [startDate, setStartDate]           = useState('');
+  const [endDate, setEndDate]               = useState('');
+  const [currentPage, setCurrentPage]       = useState(1);
+  const itemsPerPage = 20;
 
-  const [isSapLoad, setIsSapLoad] = useState(false);
-
-  // --- State for Filters ---
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-
-  // --- State for Pagination ---
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 5;
-
-  // --- 1. Updated Data Fetching Logic ---
   const fetchReports = async (sDate, eDate) => {
     setIsTableLoading(true);
     try {
       const params = {};
       if (sDate) params.startDate = sDate;
       if (eDate) params.endDate = eDate;
-
-      const response = await axios.get("/reports/getall", { params });
-
-      console.log("Report Data==========> : ", response.data)
-
+      const response = await axios.get('/reports/getall', { params });
       if (response.data.success) {
-        const filtered = response.data.data.filter(r => r.is_send_sap === false);
-        setReportData(filtered);
+        setReportData(response.data.data);
       } else {
         setReportData([]);
       }
-
     } catch (error) {
-      console.error("Server Error: ", error);
+      console.error('Server Error: ', error);
       setReportData([]);
     } finally {
       setIsTableLoading(false);
     }
   };
 
-
-  // --- 2. useEffect for Initial Load (Today's Report) ---
   useEffect(() => {
     const today = new Date().toISOString().split('T')[0];
     setStartDate(today);
@@ -57,383 +84,352 @@ export default function Report() {
     fetchReports(today, today);
   }, []);
 
-  // --- 3. Updated Filter Handler ---
   const handleFilter = () => {
     if (startDate && endDate) {
-      setCurrentPage(1); // Reset to first page on new filter
+      setCurrentPage(1);
       fetchReports(startDate, endDate);
     } else {
-      alert("Please select both a start and end date.");
+      alert('Please select both a start and end date.');
     }
   };
 
-  // --- 4. Updated Clear Filter Handler ---
   const handleClearFilter = () => {
     setCurrentPage(1);
     const today = new Date().toISOString().split('T')[0];
     setStartDate(today);
     setEndDate(today);
-    fetchReports(today, today); // Fetch today's data again
+    fetchReports(today, today);
   };
 
-  // --- Pagination Logic (Now uses 'reportData') ---
+  // Filtered data by search
+  const filteredData = useMemo(() => {
+    if (!search.trim()) return reportData;
+    const q = search.toLowerCase();
+    return reportData.filter(r =>
+      COLUMNS.some(c => String(r[c.key] ?? '').toLowerCase().includes(q))
+    );
+  }, [reportData, search]);
+
+  // Totals row
+  const totals = useMemo(() => {
+    const t = {};
+    TOTAL_COLS.forEach(k => {
+      t[k] = filteredData.reduce((sum, r) => sum + (parseFloat(r[k]) || 0), 0);
+    });
+    return t;
+  }, [filteredData]);
+
+  // Pagination
   const { paginatedData, totalPages, startIndex } = useMemo(() => {
-    const totalPages = Math.ceil(reportData.length / itemsPerPage);
+    const totalPages = Math.ceil(filteredData.length / itemsPerPage);
     const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    const paginatedData = reportData.slice(startIndex, endIndex);
+    const paginatedData = filteredData.slice(startIndex, startIndex + itemsPerPage);
     return { paginatedData, totalPages, startIndex };
-  }, [reportData, currentPage, itemsPerPage]);
+  }, [filteredData, currentPage]);
 
-  const goToNextPage = () => setCurrentPage(prev => Math.min(prev + 1, totalPages));
-  const goToPreviousPage = () => setCurrentPage(prev => Math.max(prev - 1, 1));
-  const goToFirstPage = () => setCurrentPage(1);
-  const goToLastPage = () => setCurrentPage(totalPages);
+  const goToNextPage     = () => setCurrentPage(p => Math.min(p + 1, totalPages));
+  const goToPreviousPage = () => setCurrentPage(p => Math.max(p - 1, 1));
+  const goToFirstPage    = () => setCurrentPage(1);
+  const goToLastPage     = () => setCurrentPage(totalPages);
 
-  // --- Export to Excel Logic (Now uses 'reportData') ---
+  // Excel Export — with company header, all 35 columns, and totals row
   const handleExport = () => {
-    if (reportData.length === 0) {
-      alert("No data to export!");
+    if (filteredData.length === 0) {
+      alert('No data to export!');
       return;
     }
-    const fileType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8';
-    const fileExtension = '.xlsx';
 
-    const dataToExport = reportData.map((item, index) => ({
-      "S.No": index + 1,
-      "Doc Date": item.doc_date,
-      "Doc No": item.doc_no,
-      "To": item.to,
-      "Address": item.address,
-      "Truck No": item.truck_no,
-      "Materials": item.materials,
-      "HSN Code": item.hsn_code,
-      "Quantity": item.quantity,
-      "Rate (Incl. Tax)": item.rate_incl_tax,
-      "Tax Rate (%)": item.tax_rate,
-      "Taxable Value": item.taxable_value,
-      "CGST": item.cgst,
-      "SGST": item.sgst,
-      "Gross": item.gross,
-      "E Way Bill No": item.e_way_bill_no,
-      "Distance (km)": item.distance,
-      "Status": item?.status,
-      "Reason": item?.reason
-    }));
+    const wb = XLSX.utils.book_new();
+    const headers = COLUMNS.map(c => c.label);
 
-    const ws = XLSX.utils.json_to_sheet(dataToExport);
-    const wb = { Sheets: { 'data': ws }, SheetNames: ['data'] };
-    const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    const data = new Blob([excelBuffer], { type: fileType });
-    saveAs(data, 'ReportData' + fileExtension);
+    // Build rows array: company header first
+    const rows = [
+      ['Krishi Nutrition Company Private Limited'],
+      ['Goodshed Wagon Mobile application - Delivery Challan with E-Way Bill register'],
+      [], // blank spacer
+      headers,
+      ...filteredData.map((item, idx) =>
+        COLUMNS.map(c => {
+          if (c.key === 'row_index') return idx + 1;
+          return item[c.key] ?? '-';
+        })
+      ),
+      // Totals row
+      COLUMNS.map(c => {
+        if (c.key === 'row_index') return 'Total';
+        if (TOTAL_COLS.has(c.key)) {
+          const val = totals[c.key];
+          return c.key === 'quantity' ? val.toFixed(3) : val.toFixed(2);
+        }
+        return '';
+      }),
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+
+    // Style column widths
+    ws['!cols'] = COLUMNS.map(c => ({ wch: Math.round(c.width / 7) }));
+
+    // Merge the two header title cells across all columns
+    ws['!merges'] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: COLUMNS.length - 1 } },
+      { s: { r: 1, c: 0 }, e: { r: 1, c: COLUMNS.length - 1 } },
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'DC E-Way Bill Register');
+    const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([buf], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;charset=UTF-8',
+    });
+    saveAs(blob, `DC_EWayBill_Register_${startDate}_to_${endDate}.xlsx`);
   };
-
-  // const handleUploadToSAP = async () => {
-  //   setIsSapLoad(true);
-
-  //   try {
-  //     const convertToSAPFormat = (item) => ({
-  //       id: item.s_no,
-  //       BLDAT: item.doc_date,
-  //       XBLNR: item.doc_no,
-  //       ZTO: item.to,
-  //       ZADDRESS: item.address,
-  //       ZTRUCK_NO: item.truck_no,
-  //       MAKTX: item.materials,
-  //       MATNR: item.material_number,
-  //       ZHSN_CODE: item.hsn_code,
-  //       MENGED: item.quantity,
-  //       ZRATE: item.rate_incl_tax,
-  //       ZCGST_PER: item.tax_rate,
-  //       ZTAXABLE_VAL: item.taxable_value,
-  //       ZCGST_AMT: item.cgst,
-  //       ZSGST_AMT: item.sgst,
-  //       ZGROSS_AMT: item.gross,
-  //       ZEWAY: item.e_way_bill_no || "",
-  //       ZSD_DISTANCE: item.distance || 0
-  //     });
-
-  //     const payload = reportData.map(convertToSAPFormat);
-
-  //     const results = await Promise.allSettled(
-  //       payload.map(row => axios.post('/reports/send-to-sap', row))
-  //     );
-
-  //     let successCount = 0;
-  //     let failedCount = 0;
-  //     const failedRows = [];
-
-  //     results.forEach((result, i) => {
-  //       if (result.status === "fulfilled") {
-  //         successCount++;
-  //       } else {
-  //         failedCount++;
-  //         failedRows.push(i + 1);
-  //       }
-  //     });
-
-  //     if (successCount > 0) {
-  //       await fetchReports();
-  //       Swal.fire({
-  //         icon: "success",
-  //         title: "Uploaded to SAP",
-  //         text: `${successCount} records successfully uploaded.`,
-  //         timer: 2000,
-  //         showConfirmButton: false
-  //       });
-  //     }
-
-  //     if (failedCount > 0) {
-  //       Swal.fire({
-  //         icon: "error",
-  //         title: "Some Uploads Failed",
-  //         html: `
-  //         Failed rows: <b>${failedRows.join(", ")}</b><br/><br/>
-  //         Check console for full error details.
-  //       `,
-  //       });
-  //     }
-
-  //   } catch (error) {
-  //     Swal.fire({
-  //       icon: "error",
-  //       title: "Unexpected Error",
-  //       text: "Something went wrong. Check console.",
-  //     });
-  //     console.error(error);
-  //   } finally {
-  //     setIsSapLoad(false);
-  //   }
-  // };
-
 
   const handleUploadToSAP = async () => {
     setIsSapLoad(true);
-
     try {
+      const uniqueDcIds = [...new Set(filteredData.filter(r => !r.is_send_sap).map(r => r.s_no))];
+      if (uniqueDcIds.length === 0) {
+        Swal.fire({ icon: 'info', title: 'Nothing to upload', text: 'All records are already sent to SAP.' });
+        return;
+      }
+
       const results = await Promise.allSettled(
-        reportData.map(item =>
-          axios.post(`/reports/send-to-sap/${item.s_no}`)
-        )
+        uniqueDcIds.map(id => axios.post(`/reports/send-to-sap/${id}`))
       );
 
-      let successCount = 0;
-      let failedCount = 0;
+      let successCount = 0, failedCount = 0;
       const failedRows = [];
-
-      results.forEach((res, index) => {
-        if (res.status === "fulfilled") {
-          successCount++;
-        } else {
-          failedCount++;
-          failedRows.push(index + 1);
-        }
+      results.forEach((res, i) => {
+        if (res.status === 'fulfilled') successCount++;
+        else { failedCount++; failedRows.push(uniqueDcIds[i]); }
       });
 
       if (successCount > 0) {
-        await fetchReports();
-        Swal.fire({
-          icon: "success",
-          title: "Uploaded to SAP",
-          text: `${successCount} records successfully uploaded.`,
-          timer: 2000,
-          showConfirmButton: false
-        });
+        await fetchReports(startDate, endDate);
+        Swal.fire({ icon: 'success', title: 'Uploaded to SAP', text: `${successCount} DC(s) successfully uploaded.`, timer: 2000, showConfirmButton: false });
       }
-
       if (failedCount > 0) {
-        Swal.fire({
-          icon: "error",
-          title: "Some Uploads Failed",
-          html: `Failed rows: <b>${failedRows.join(", ")}</b>`,
-        });
+        Swal.fire({ icon: 'error', title: 'Some Uploads Failed', html: `Failed DC IDs: <b>${failedRows.join(', ')}</b>` });
       }
     } catch (err) {
       console.error(err);
-      Swal.fire({
-        icon: "error",
-        title: "Unexpected Error",
-        text: "Something went wrong.",
-      });
+      Swal.fire({ icon: 'error', title: 'Unexpected Error', text: 'Something went wrong.' });
     } finally {
       setIsSapLoad(false);
     }
   };
 
+  const statusBadge = (val) => {
+    if (!val || val === '-') return <span className="text-gray-400">-</span>;
+    const isActive = val.toLowerCase() === 'active';
+    return (
+      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap ${
+        isActive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+      }`}>
+        {val}
+      </span>
+    );
+  };
+
+  const renderCell = (col, item) => {
+    const val = item[col.key];
+    if (col.key === 'dc_status' || col.key === 'ewb_status') return statusBadge(val);
+    if (['taxable_value', 'cgst', 'sgst', 'gross', 'item_rate', 'rate_incl_tax'].includes(col.key)) {
+      const num = parseFloat(val);
+      if (!isNaN(num) && num > 0) return <span className="font-mono tabular-nums">₹{Number(val).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>;
+    }
+    return <span className={`${val === '-' ? 'text-gray-300' : ''}`}>{val ?? '-'}</span>;
+  };
 
   return (
-    <div className={`rounded-lg shadow flex-1`}>
-      {isPageLoading && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
-          <div className="text-center text-white">
-            <div className="w-12 h-12 mx-auto border-4 border-white border-t-transparent rounded-full animate-spin"></div>
-            <p className="mt-2">Uploading to SAP...</p>
-          </div>
+    <div className="bg-[#F9F9FC] min-h-screen font-poppins">
+
+      {/* Page Header */}
+      <div className="px-6 pt-5 pb-3">
+        <h1 className="text-xl font-bold text-gray-900">Delivery Challan & E-Way Bill Register</h1>
+        <div className="flex items-center gap-x-2 text-sm text-gray-500 mt-1">
+          <Link to="/" className="text-orange-500">Dashboard</Link>
+          <RiArrowUpSFill className="rotate-90" size={18} />
+          <span>Report</span>
         </div>
-      )}
+        <p className="text-xs text-gray-400 mt-0.5">Goodshed Wagon Mobile Application — Krishi Nutrition Company Private Limited</p>
+      </div>
 
-      <div className={`bg-[#F9F9FC] min-h-screen relative`}>
-        {/* Header */}
-        <div className="space-y-4 pt-3 px-6 font-poppins">
-          <h1 className="text-xl font-bold text-gray-900">Report</h1>
-          <div className="flex items-center gap-x-2 text-sm text-gray-500 ">
-            <Link to="/" className='text-orange-500'>Dashboard</Link>
-            <span><RiArrowUpSFill className='rotate-90' size={20} /></span>
-            <span>Report</span>
+      {/* Controls */}
+      <div className="px-6 py-3 flex flex-wrap items-center justify-between gap-3">
+        {/* Left: Filters */}
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <div className="flex items-center gap-2">
+            <label className="text-gray-600 font-medium">From:</label>
+            <input
+              type="date" value={startDate}
+              onChange={e => setStartDate(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-400 outline-none"
+            />
           </div>
-        </div>
-
-        {/* Filter and Action Controls */}
-        <div className="px-4 mx-4 mt-3 py-4 font-poppins">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div className="flex items-center gap-4 text-sm">
-              <div className='flex items-center gap-2'>
-                <label htmlFor="startDate">From:</label>
-                <input type="date" id="startDate" value={startDate} onChange={(e) => setStartDate(e.target.value)} className='p-2 border rounded-md focus:ring-2 focus:ring-orange-500' />
-              </div>
-              <div className='flex items-center gap-2'>
-                <label htmlFor="endDate">To:</label>
-                <input type="date" id="endDate" value={endDate} onChange={(e) => setEndDate(e.target.value)} className='p-2 border rounded-md focus:ring-2 focus:ring-orange-500' />
-              </div>
-              <button onClick={handleFilter} className='px-4 py-2 text-white bg-primary rounded-md'>Filter</button>
-              <button onClick={handleClearFilter} className='px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300'>Clear</button>
-            </div>
-            <div className="flex items-center gap-3">
-              <button onClick={handleExport} className='flex items-center gap-2 px-4 py-2 text-sm text-white bg-secondary rounded-md hover:bg-secondary'>
-                <RiFileExcel2Line size={18} /> Export
-              </button>
-
-              <button
-                onClick={handleUploadToSAP}
-                disabled={isSapLoad}
-                className={`flex items-center gap-2 px-4 py-2 text-sm text-white bg-primary rounded-md 
-  ${isSapLoad ? "opacity-60 cursor-not-allowed" : "hover:bg-primary"}`}
-              >
-                {isSapLoad ? (
-                  <div className="flex items-center gap-2">
-                    <svg className="animate-spin h-4 w-4 text-white" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="white" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="white" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                    </svg>
-                    Uploading...
-                  </div>
-                ) : (
-                  <>
-                    <RiUploadCloud2Line size={18} /> Upload to SAP
-                  </>
-                )}
-              </button>
-
-
-            </div>
+          <div className="flex items-center gap-2">
+            <label className="text-gray-600 font-medium">To:</label>
+            <input
+              type="date" value={endDate}
+              onChange={e => setEndDate(e.target.value)}
+              className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-400 outline-none"
+            />
           </div>
+          <button onClick={handleFilter}      className="px-4 py-1.5 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600 transition">Filter</button>
+          <button onClick={handleClearFilter} className="px-4 py-1.5 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition">Clear</button>
+          <input
+            type="text" placeholder="Search…" value={search}
+            onChange={e => { setSearch(e.target.value); setCurrentPage(1); }}
+            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-orange-400 outline-none w-44"
+          />
         </div>
 
-        {/* Table Container */}
-        <div className="mx-4 bg-white border border-gray-300">
-          <div className="overflow-x-auto scrollbar-thumb-rounded-full scrollbar-track-rounded-full scrollbar-thin scrollbar-thumb-gray scrollbar-track-white">
-            <table className="w-full min-w-[1600px]">
-              <thead className='font-poppins font-semibold'>
-                <tr className="border-b bg-gray-50">
-                  <th className="p-4 text-center text-sm text-black">S.No</th>
-                  <th className="p-4 text-center text-sm text-black">Doc Date</th>
-                  <th className="p-4 text-center text-sm text-black">Doc No</th>
-                  <th className="p-4 text-center text-sm text-black">supplier ID</th>
-                  <th className="p-4 text-center text-sm text-black">To</th>
-                  <th className="p-4 text-center text-sm text-black">Address</th>
-                  <th className="p-4 text-center text-sm text-black">Truck No</th>
-                  <th className="p-4 text-center text-sm text-black">Materials</th>
-                  <th className="p-4 text-center text-sm text-black">HSN Code</th>
-                  <th className="p-4 text-center text-sm text-black">Quantity</th>
-                  <th className="p-4 text-center text-sm  whitespace-nowrap text-black">Rate (Incl. Tax)</th>
-                  <th className="p-4 text-center text-sm text-black">Tax Rate</th>
-                  <th className="p-4 text-center text-sm text-black">Taxable Value</th>
-                  <th className="p-4 text-center text-sm text-black">CGST</th>
-                  <th className="p-4 text-center text-sm text-black">SGST</th>
-                  <th className="p-4 text-center text-sm text-black">Gross</th>
-                  <th className="p-4 text-center text-sm text-black">E Way Bill No</th>
-                  <th className="p-4 text-center text-sm text-black">Distance</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y font-poppins">
-                {isTableLoading ? (
-                  <tr>
-                    <td colSpan="18" className="py-10 text-center">
-                      <div className="flex justify-center items-center">
-                        <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin"></div>
-                      </div>
-                    </td>
-                  </tr>
-                ) : paginatedData.length > 0 ? (
-                  paginatedData.map((item, index) => (
-                    <tr key={`${item.s_no}-${item.materials}`} className="hover:bg-gray-50 text-center">
-                      <td className="p-4 text-sm opacity-80">{startIndex + index + 1}</td>
-                      <td className="p-4 text-sm opacity-80 whitespace-nowrap">{item.doc_date}</td>
-                      <td className="p-4 text-sm whitespace-nowrap opacity-80">{item.doc_no}</td>
-                      <td className="p-4 text-sm whitespace-nowrap opacity-80">{item.supplier_id}</td>
-                      <td className="p-4 text-sm opacity-80 max-w-[200px] truncate">{item.to}</td>
-                      <td
-                        className="p-4 text-sm opacity-80 max-w-[200px] truncate"
-                        title={item.address}
-                      >
-                        {item.address}
-                      </td>
+        {/* Right: Actions */}
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-gray-500 mr-1">{filteredData.length} records</span>
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-2 px-4 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition"
+          >
+            <RiFileExcel2Line size={16} /> Export Excel
+          </button>
 
-                      <td className="p-4 text-sm opacity-80 whitespace-nowrap">{item.truck_no}</td>
-                      <td className="p-4 text-sm opacity-80">{item.materials}</td>
-                      <td className="p-4 text-sm opacity-80">{item.hsn_code}</td>
-                      <td className="p-4 text-sm opacity-80">{item.quantity}</td>
-                      <td className="p-4 text-sm opacity-80">{item.rate_incl_tax}</td>
-                      <td className="p-4 text-sm opacity-80">{item.tax_rate}%</td>
-                      <td className="p-4 text-sm opacity-80">{item.taxable_value}</td>
-                      <td className="p-4 text-sm opacity-80">{item.cgst}</td>
-                      <td className="p-4 text-sm opacity-80">{item.sgst}</td>
-                      <td className="p-4 text-sm opacity-80">{item.gross}</td>
-                      <td className="p-4 text-sm  whitespace-nowrap opacity-80">{item.e_way_bill_no || '-'}</td>
-                      <td className="p-4 text-sm opacity-80">{item.distance || '-'} km</td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan="18" className="py-10 text-center text-gray-500 text-sm">
-                      No Data Available
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination Controls */}
-          {totalPages > 1 && (
-            <div className="flex justify-end font-dm mr-4 items-center gap-2 mt-4 pb-4">
-              <button
-                onClick={goToPreviousPage}
-                disabled={currentPage === 1}
-                className={`px-3 py-1 border rounded ${currentPage === 1 ? 'text-gray-400 bg-gray-200 cursor-not-allowed' : 'text-white bg-[#F3890A] hover:bg-orange-600'}`}
-              >
-                &lt;
-              </button>
-              {currentPage > 1 && (
-                <button onClick={goToFirstPage} className="px-3 py-1 text-sm border rounded text-black hover:bg-gray-200">1</button>
-              )}
-              {currentPage > 2 && <span className="px-3 py-1">...</span>}
-              <span className="px-3 py-1 border font-medium rounded bg-gray-200">{currentPage}</span>
-              {currentPage < totalPages - 1 && <span className="px-3 py-1">...</span>}
-              {currentPage < totalPages && (
-                <button onClick={goToLastPage} className="px-3 py-1 border text-sm rounded text-black hover:bg-gray-200">{totalPages}</button>
-              )}
-              <button
-                onClick={goToNextPage}
-                disabled={currentPage === totalPages}
-                className={`px-3 py-1 border rounded ${currentPage === totalPages ? 'text-gray-400 bg-gray-200 cursor-not-allowed' : 'text-white bg-[#F3890A] hover:bg-orange-600'}`}
-              >
-                &gt;
-              </button>
-            </div>
-          )}
         </div>
       </div>
+
+      {/* Table */}
+      <div className="mx-6 bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-50">
+          <table className="w-full text-sm border-collapse" style={{ minWidth: '3800px' }}>
+            <thead>
+              <tr className="bg-[#FDF3E6] border-b-2 border-orange-200">
+                {COLUMNS.map(col => (
+                  <th
+                    key={col.key}
+                    className="px-3 py-3 text-center text-xs font-semibold text-gray-700 whitespace-nowrap border-r border-orange-100 last:border-r-0"
+                    style={{ minWidth: col.width }}
+                  >
+                    {col.label}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {isTableLoading ? (
+                <tr>
+                  <td colSpan={COLUMNS.length} className="py-16 text-center">
+                    <div className="flex flex-col items-center gap-2">
+                      <div className="w-8 h-8 border-4 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-sm text-gray-400">Loading report data…</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : paginatedData.length > 0 ? (
+                <>
+                  {paginatedData.map((item, idx) => (
+                    <tr
+                      key={`${item.s_no}-${item.item_code}-${idx}`}
+                      className={`hover:bg-orange-50/50 transition-colors ${
+                        item.dc_status === 'Cancelled' ? 'bg-red-50/30' : ''
+                      }`}
+                    >
+                      {COLUMNS.map(col => (
+                        <td
+                          key={col.key}
+                          className="px-3 py-2.5 text-center text-xs text-gray-700 border-r border-gray-100 last:border-r-0"
+                          title={col.key === 'branch_address' ? String(item[col.key] ?? '') : undefined}
+                        >
+                          {col.key === 'row_index'
+                            ? startIndex + idx + 1
+                            : renderCell(col, item)
+                          }
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </>
+              ) : (
+                <tr>
+                  <td colSpan={COLUMNS.length} className="py-14 text-center text-gray-400 text-sm">
+                    No data available for the selected date range.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+
+            {/* Totals Footer */}
+            {!isTableLoading && filteredData.length > 0 && (
+              <tfoot>
+                <tr className="bg-orange-50 border-t-2 border-orange-300 font-semibold">
+                  {COLUMNS.map((col, i) => (
+                    <td
+                      key={col.key}
+                      className="px-3 py-3 text-center text-xs text-gray-800 border-r border-orange-200 last:border-r-0"
+                    >
+                      {i === 0 ? (
+                        <span className="font-bold text-orange-700">Total</span>
+                      ) : TOTAL_COLS.has(col.key) ? (
+                        <span className={`font-mono tabular-nums ${['taxable_value','cgst','sgst','gross'].includes(col.key) ? 'text-orange-700' : 'text-gray-800'}`}>
+                          {col.key === 'quantity'
+                            ? totals[col.key].toFixed(3)
+                            : col.key === 'no_of_bags'
+                            ? totals[col.key].toLocaleString('en-IN')
+                            : `₹${totals[col.key].toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                          }
+                        </span>
+                      ) : (
+                        ''
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
+            <span className="text-xs text-gray-500">
+              Showing {startIndex + 1}–{Math.min(startIndex + itemsPerPage, filteredData.length)} of {filteredData.length} rows
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={goToPreviousPage} disabled={currentPage === 1}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${currentPage === 1 ? 'text-gray-400 bg-gray-200 cursor-not-allowed' : 'text-white bg-orange-500 hover:bg-orange-600'}`}
+              >
+                &lt; Prev
+              </button>
+              {currentPage > 2 && <button onClick={goToFirstPage} className="px-3 py-1.5 rounded-lg text-xs border hover:bg-gray-100">1</button>}
+              {currentPage > 3 && <span className="px-2 text-gray-400 text-xs">…</span>}
+              {currentPage > 1 && (
+                <button onClick={() => setCurrentPage(currentPage - 1)} className="px-3 py-1.5 rounded-lg text-xs border hover:bg-gray-100">
+                  {currentPage - 1}
+                </button>
+              )}
+              <span className="px-3 py-1.5 rounded-lg text-xs bg-orange-500 text-white font-bold">{currentPage}</span>
+              {currentPage < totalPages && (
+                <button onClick={() => setCurrentPage(currentPage + 1)} className="px-3 py-1.5 rounded-lg text-xs border hover:bg-gray-100">
+                  {currentPage + 1}
+                </button>
+              )}
+              {currentPage < totalPages - 2 && <span className="px-2 text-gray-400 text-xs">…</span>}
+              {currentPage < totalPages - 1 && (
+                <button onClick={goToLastPage} className="px-3 py-1.5 rounded-lg text-xs border hover:bg-gray-100">{totalPages}</button>
+              )}
+              <button
+                onClick={goToNextPage} disabled={currentPage === totalPages}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${currentPage === totalPages ? 'text-gray-400 bg-gray-200 cursor-not-allowed' : 'text-white bg-orange-500 hover:bg-orange-600'}`}
+              >
+                Next &gt;
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="h-6" />
     </div>
-  )
+  );
 }

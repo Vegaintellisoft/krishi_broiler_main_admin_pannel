@@ -4,6 +4,8 @@ import { Link } from 'react-router-dom'
 import { RiArrowUpSFill, RiDeleteBin6Line, RiSearchLine } from 'react-icons/ri'
 import { LuImport } from 'react-icons/lu'
 import { TbEdit } from "react-icons/tb";
+import { MdFileDownload, MdDownloadForOffline } from 'react-icons/md';
+import { BsCalendarDateFill } from 'react-icons/bs';
 import axios from 'axios';
 import Swal from 'sweetalert2'
 import ExcelExport from '../utils/ExcelExport'
@@ -27,6 +29,14 @@ const DC = () => {
     const [isPageLoading, setIsPageLoading] = useState(false)
     const [isSubmitLoading, setIsSubmitLoading] = useState(false)
     const [loadingId, setLoadingId] = useState(null);
+    const [downloadingId, setDownloadingId] = useState(null);
+
+    // Bulk download modal state
+    const [isBulkDownloadOpen, setIsBulkDownloadOpen] = useState(false);
+    const [bulkFromDate, setBulkFromDate] = useState('');
+    const [bulkToDate, setBulkToDate] = useState('');
+    const [isBulkDownloading, setIsBulkDownloading] = useState(false);
+    const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
 
     const [selectedMaterial, setSelectedMaterial] = useState("")
     const [quantity, setQuantity] = useState(0);
@@ -309,6 +319,131 @@ const DC = () => {
         ExcelExport(data, "Delivery_Challan.xlsx");
     };
 
+    // Helper: fetch PDF from backend as blob and trigger download
+    // The backend returns an absolute URL with its local IP (e.g. 192.168.5.224:4010/challans/X.pdf).
+    // We extract just the pathname and fetch it from the correct backend origin.
+    const downloadPdfBlob = async (pdfLink, fileName) => {
+        // Extract just the pathname: /challans/EGE.pdf
+        let pdfPath;
+        try {
+            pdfPath = new URL(pdfLink).pathname;
+        } catch {
+            pdfPath = pdfLink;
+        }
+        // Build correct URL using VITE_SERVER_URL origin (strip /api suffix)
+        const serverBase = import.meta.env.VITE_SERVER_URL?.replace(/\/api\/?$/, '');
+        const fullUrl = `${serverBase}${pdfPath}`;
+
+        const response = await fetch(fullUrl, {
+            headers: {
+                Authorization: axios.defaults.headers?.common?.Authorization || ''
+            }
+        });
+        if (!response.ok) throw new Error('PDF fetch failed');
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(blobUrl);
+    };
+
+    // Download individual DC as PDF
+    const downloadChallan = async (item) => {
+        setDownloadingId(item.token_no);
+        try {
+            const { data: res } = await axios.post(`/dc/getChallanByView`, { dcData: item });
+            const pdfLink = res.pdfLink;
+            if (pdfLink) {
+                await downloadPdfBlob(pdfLink, `DC_${item.token_no}.pdf`);
+            } else {
+                Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'PDF not available', showConfirmButton: false, timer: 2000 });
+            }
+        } catch (error) {
+            Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Download failed. Try again.', showConfirmButton: false, timer: 2000 });
+        } finally {
+            setDownloadingId(null);
+        }
+    };
+
+    // Apply last 1 month date range
+    const applyLastOneMonth = () => {
+        const today = new Date();
+        const oneMonthAgo = new Date();
+        oneMonthAgo.setMonth(today.getMonth() - 1);
+        const fmt = (d) => d.toISOString().split('T')[0];
+        setBulkFromDate(fmt(oneMonthAgo));
+        setBulkToDate(fmt(today));
+    };
+
+    // Helper: get DC date from any available date field, as a local YYYY-MM-DD string
+    const getDCDateStr = (item) => {
+        const raw = item.createdAt || item.created_at || item.date || item.dc_date || item.challan_date || null;
+        if (!raw) return null;
+        const d = new Date(raw);
+        if (isNaN(d.getTime())) return null;
+        // Return as local date string YYYY-MM-DD
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    };
+
+    // Filter DC items by date range, comparing YYYY-MM-DD strings (timezone-safe)
+    const filterDCByDateRange = (items, fromDate, toDate) => {
+        return items.filter((item) => {
+            // If no date field at all, include it (don't silently drop)
+            const dateStr = getDCDateStr(item);
+            if (!dateStr) return item.status !== 3;
+            return dateStr >= fromDate && dateStr <= toDate && item.status !== 3;
+        });
+    };
+
+    // Bulk download filtered DCs
+    const handleBulkDownload = async () => {
+        if (!bulkFromDate || !bulkToDate) {
+            Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Please select both From and To dates', showConfirmButton: false, timer: 2000 });
+            return;
+        }
+        if (bulkFromDate > bulkToDate) {
+            Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'From date cannot be after To date', showConfirmButton: false, timer: 2000 });
+            return;
+        }
+        const filtered = filterDCByDateRange(data, bulkFromDate, bulkToDate);
+        if (filtered.length === 0) {
+            Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No active DCs found in this date range', showConfirmButton: false, timer: 2500 });
+            return;
+        }
+        setIsBulkDownloading(true);
+        setBulkProgress({ current: 0, total: filtered.length });
+        let successCount = 0;
+        for (let i = 0; i < filtered.length; i++) {
+            const item = filtered[i];
+            setBulkProgress({ current: i + 1, total: filtered.length });
+            try {
+                const { data: res } = await axios.post(`/dc/getChallanByView`, { dcData: item });
+                if (res.pdfLink) {
+                    await downloadPdfBlob(res.pdfLink, `DC_${item.token_no}.pdf`);
+                    successCount++;
+                    await new Promise(r => setTimeout(r, 600));
+                }
+            } catch (err) {
+                console.error(`Failed to download DC for ${item.token_no}`, err);
+            }
+        }
+        setIsBulkDownloading(false);
+        setBulkProgress({ current: 0, total: 0 });
+        setIsBulkDownloadOpen(false);
+        Swal.fire({
+            toast: true, position: 'top-end', icon: 'success',
+            title: `Downloaded ${successCount} of ${filtered.length} DCs`,
+            showConfirmButton: false, timer: 3000
+        });
+    };
+
 
     function closeModal() {
         setIsOpen(false);
@@ -435,6 +570,114 @@ const DC = () => {
                 </div>
             )}
 
+            {/* Bulk Download Modal */}
+            {isBulkDownloadOpen && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+                    <div className="bg-white rounded-xl shadow-2xl w-[480px] font-poppins overflow-hidden">
+                        {/* Header */}
+                        <div className="flex justify-between items-center px-6 py-4 border-b bg-gradient-to-r from-orange-500 to-orange-400">
+                            <div className="flex items-center gap-2 text-white">
+                                <MdDownloadForOffline size={22} />
+                                <h2 className="text-lg font-semibold">Bulk Download DCs</h2>
+                            </div>
+                            <button
+                                onClick={() => { setIsBulkDownloadOpen(false); setBulkFromDate(''); setBulkToDate(''); }}
+                                className="text-white hover:bg-white hover:bg-opacity-20 rounded-full p-1 transition"
+                            >
+                                <IoCloseSharp size={20} />
+                            </button>
+                        </div>
+
+                        {/* Body */}
+                        <div className="px-6 py-5 space-y-5">
+                            {/* Quick select */}
+                            <div>
+                                <p className="text-sm text-gray-500 mb-2 font-medium">Quick Select</p>
+                                <button
+                                    onClick={applyLastOneMonth}
+                                    className="flex items-center gap-2 px-4 py-2 bg-orange-50 border border-orange-300 text-orange-600 text-sm rounded-lg hover:bg-orange-100 transition font-medium"
+                                >
+                                    <BsCalendarDateFill size={14} />
+                                    Last 1 Month
+                                </button>
+                            </div>
+
+                            <div className="border-t border-dashed"></div>
+
+                            {/* Date range */}
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
+                                    <input
+                                        type="date"
+                                        value={bulkFromDate}
+                                        onChange={(e) => setBulkFromDate(e.target.value)}
+                                        className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
+                                    <input
+                                        type="date"
+                                        value={bulkToDate}
+                                        onChange={(e) => setBulkToDate(e.target.value)}
+                                        className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Preview count */}
+                            {bulkFromDate && bulkToDate && (
+                                <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-3 text-sm text-orange-700">
+                                    {(() => {
+                                        const count = filterDCByDateRange(data, bulkFromDate, bulkToDate).length;
+                                        return <span><strong>{count}</strong> active DC(s) found in the selected range.</span>;
+                                    })()}
+                                </div>
+                            )}
+
+                            {/* Progress */}
+                            {isBulkDownloading && (
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-xs text-gray-500">
+                                        <span>Downloading...</span>
+                                        <span>{bulkProgress.current} / {bulkProgress.total}</span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                        <div
+                                            className="bg-orange-500 h-2.5 rounded-full transition-all duration-300"
+                                            style={{ width: `${bulkProgress.total > 0 ? (bulkProgress.current / bulkProgress.total) * 100 : 0}%` }}
+                                        ></div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="flex gap-3 px-6 pb-5">
+                            <button
+                                onClick={() => { setIsBulkDownloadOpen(false); setBulkFromDate(''); setBulkToDate(''); }}
+                                disabled={isBulkDownloading}
+                                className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition text-sm font-medium"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={handleBulkDownload}
+                                disabled={isBulkDownloading}
+                                className="flex-1 px-4 py-2.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition text-sm font-medium flex items-center justify-center gap-2"
+                            >
+                                {isBulkDownloading ? (
+                                    <><svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Downloading...</>
+                                ) : (
+                                    <><MdFileDownload size={18} /> Download All</>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {modalIsOpen ? (
                 <div className="fixed inset-0 bg-black bg-opacity-40 flex justify-center items-center z-50">
                     <form
@@ -552,16 +795,24 @@ const DC = () => {
                             </div>
                         </div>
 
-                        <div className='space-x-5 flex'>
+                        <div className='space-x-3 flex items-center'>
 
-                            <button onClick={handleExport} className="px-4 py-2 bg-[#EFE8E0] text-[#F3890A] border rounded-lg hover:bg-orange-500 hover:text-white">
+                            <button
+                                onClick={() => setIsBulkDownloadOpen(true)}
+                                className="px-4 py-2 bg-[#E8F0FE] text-[#1a73e8] border border-blue-200 rounded-lg hover:bg-blue-500 hover:text-white transition"
+                            >
+                                <div className="flex gap-2 items-center text-xs">
+                                    <MdDownloadForOffline size={16} />
+                                    <span>Bulk Download</span>
+                                </div>
+                            </button>
+
+                            <button onClick={handleExport} className="px-4 py-2 bg-[#EFE8E0] text-[#F3890A] border rounded-lg hover:bg-orange-500 hover:text-white transition">
                                 <div className="flex gap-2 items-center text-xs ">
                                     <LuImport size={16} className='opacity-50' />
                                     <span>Export</span>
                                 </div>
                             </button>
-
-
 
                         </div>
                     </div>
@@ -679,6 +930,32 @@ const DC = () => {
                                                     >
                                                         View
                                                     </button>
+                                                }
+
+                                                {
+                                                    deliveryChallan?.view && (
+                                                        <button
+                                                            onClick={() => downloadChallan(item)}
+                                                            title="Download DC PDF"
+                                                            disabled={item.status === 3 || downloadingId === item.token_no}
+                                                            className={`px-3 py-1 text-sm flex items-center gap-1 ${
+                                                                item.status === 3
+                                                                    ? 'bg-gray-400'
+                                                                    : downloadingId === item.token_no
+                                                                    ? 'bg-blue-400'
+                                                                    : 'bg-blue-600 hover:bg-blue-700'
+                                                            } text-white rounded transition`}
+                                                        >
+                                                            {downloadingId === item.token_no ? (
+                                                                <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                                                                </svg>
+                                                            ) : (
+                                                                <MdFileDownload size={16} />
+                                                            )}
+                                                        </button>
+                                                    )
                                                 }
 
                                                 {
