@@ -43,6 +43,9 @@ const BroilerDashBoard = () => {
   const [toDate, setToDate] = useState('');
   const [period, setPeriod] = useState('daily');
   const [searchText, setSearchText] = useState('');
+  const [selectedReason, setSelectedReason] = useState('');
+  const [availableReasonsList, setAvailableReasonsList] = useState([]);
+  const [entrySearchText, setEntrySearchText] = useState('');
 
   // Photo modal state supporting Mortality, Start KM, and End KM tabs
   const [photoModal, setPhotoModal] = useState(null);
@@ -175,14 +178,16 @@ const BroilerDashBoard = () => {
   const [loginCurrentPage, setLoginCurrentPage] = useState(1);
   const loginItemsPerPage = 5;
 
-  const fetchReportData = async (fromVal, toVal, periodVal) => {
+  const fetchReportData = async (fromVal, toVal, periodVal, reasonVal) => {
     setLoading(true);
     try {
+      const activeReason = reasonVal !== undefined ? reasonVal : selectedReason;
       const { data } = await axios.get('/admin/broiler-dashboard-report', {
         params: {
           from: fromVal || '',
           to: toVal || '',
-          period: periodVal || 'daily'
+          period: periodVal || 'daily',
+          reason: activeReason || ''
         }
       });
       if (data.status && data.data) {
@@ -194,6 +199,9 @@ const BroilerDashBoard = () => {
         });
         setReportDetails(data.data.reportDetails || []);
         setLoginDetails(data.data.loginDetails || []);
+        if (data.data.available_mortality_reasons) {
+          setAvailableReasonsList(data.data.available_mortality_reasons);
+        }
         if (data.data.fromDate) setFromDate(data.data.fromDate);
         if (data.data.toDate) setToDate(data.data.toDate);
       }
@@ -205,17 +213,18 @@ const BroilerDashBoard = () => {
   };
 
   useEffect(() => {
-    fetchReportData(fromDate, toDate, period);
+    fetchReportData(fromDate, toDate, period, selectedReason);
   }, []);
 
   const handleRefresh = () => {
-    fetchReportData(fromDate, toDate, period);
+    fetchReportData(fromDate, toDate, period, selectedReason);
   };
 
   const handleFilterChange = (type, value) => {
     let nextFrom = fromDate;
     let nextTo = toDate;
     let nextPeriod = period;
+    let nextReason = selectedReason;
 
     if (type === 'from') {
       setFromDate(value);
@@ -226,20 +235,29 @@ const BroilerDashBoard = () => {
     } else if (type === 'period') {
       setPeriod(value);
       nextPeriod = value;
+    } else if (type === 'reason') {
+      setSelectedReason(value);
+      nextReason = value;
     }
 
-    fetchReportData(nextFrom, nextTo, nextPeriod);
+    fetchReportData(nextFrom, nextTo, nextPeriod, nextReason);
     setCurrentPage(1);
     setLoginCurrentPage(1);
   };
 
-  const fetchFarmActivityDetails = async (date, plant) => {
+  const fetchFarmActivityDetails = async (date, plant, reasonVal) => {
     setFarmActivityLoading(true);
     setFarmActivityDetails(null);
     setFarmActivityError(null);
     try {
+      const activeReason = reasonVal !== undefined ? reasonVal : selectedReason;
       const { data } = await axios.get('/admin/broiler-farm-activity-details', {
-        params: { date, plant: String(plant), period }
+        params: { 
+          date, 
+          plant: String(plant), 
+          period, 
+          reason: activeReason || '' 
+        }
       });
       if (data.status && data.data) {
         setFarmActivityDetails(data.data);
@@ -259,9 +277,11 @@ const BroilerDashBoard = () => {
       setExpandedRow(null);
       setFarmActivityDetails(null);
       setFarmActivityError(null);
+      setEntrySearchText('');
     } else {
       setExpandedRow(rowKey);
-      fetchFarmActivityDetails(row.period_date, row.plant);
+      setEntrySearchText('');
+      fetchFarmActivityDetails(row.period_date, row.plant, selectedReason);
     }
   };
 
@@ -297,12 +317,28 @@ const BroilerDashBoard = () => {
     }
   };
 
-  // Search filtering
-  const filteredReportData = reportDetails.filter(
-    (item) =>
-      String(item.plant_name).toLowerCase().includes(searchText.toLowerCase()) ||
-      String(item.plant).toLowerCase().includes(searchText.toLowerCase())
-  );
+  // Known standard reasons combined with any reasons present in the backend database
+  const standardReasons = ['Sudden Death', 'Weakness', 'Disease', 'Heat Stress', 'Ascites', 'Cannibalism', 'Culling', 'Toxic / Poisoning', 'Other'];
+  const extractedFromReport = reportDetails
+    .flatMap(r => (r.mortality_reasons ? r.mortality_reasons.split(', ') : []))
+    .map(s => s.trim())
+    .filter(Boolean);
+  const allKnownReasons = [...new Set([...availableReasonsList, ...extractedFromReport, ...standardReasons])].filter(Boolean);
+
+  // Search filtering on main report
+  const filteredReportData = reportDetails.filter((item) => {
+    const matchesSearch =
+      String(item.plant_name || '').toLowerCase().includes(searchText.toLowerCase()) ||
+      String(item.plant || '').toLowerCase().includes(searchText.toLowerCase()) ||
+      String(item.mortality_reasons || '').toLowerCase().includes(searchText.toLowerCase());
+
+    const matchesReason = !selectedReason || (
+      item.mortality_reasons &&
+      item.mortality_reasons.toLowerCase().includes(selectedReason.toLowerCase())
+    );
+
+    return matchesSearch && matchesReason;
+  });
 
   // Pagination for main report table
   const totalPages = Math.ceil(filteredReportData.length / itemsPerPage);
@@ -314,17 +350,160 @@ const BroilerDashBoard = () => {
   const startLoginIndex = (loginCurrentPage - 1) * loginItemsPerPage;
   const paginatedLoginData = loginDetails.slice(startLoginIndex, startLoginIndex + loginItemsPerPage);
 
+  const [exportingDetails, setExportingDetails] = useState(false);
+
   // Export handlers
-  const handleExportEntries = () => {
-    const exportData = filteredReportData.map(item => ({
-      "Period Date": item.period_date,
-      "Plant Code": item.plant,
-      "Plant Name": item.plant_name,
-      "Entries Posted": item.posted,
-      "Active User Count": item.user_count,
-      "User List": item.usernames || '-'
+  const handleExportDetailedReport = async () => {
+    if (!filteredReportData || filteredReportData.length === 0) {
+      alert("No report entries available to export.");
+      return;
+    }
+
+    setExportingDetails(true);
+    try {
+      // Fetch detailed farm activities for all matching plant and date combinations
+      const fetchPromises = filteredReportData.map(async (row) => {
+        try {
+          const { data } = await axios.get('/admin/broiler-farm-activity-details', {
+            params: {
+              date: row.period_date,
+              plant: String(row.plant),
+              period,
+              reason: selectedReason || ''
+            }
+          });
+
+          if (data?.status && data?.data?.entries && Array.isArray(data.data.entries)) {
+            const pName = data.data.plant_name || row.plant_name;
+            const pCode = data.data.plant || row.plant;
+            const pDate = data.data.date || row.period_date;
+
+            return data.data.entries.map((entry) => ({
+              ...entry,
+              plant_name: pName,
+              plant_code: pCode,
+              period_date: pDate
+            }));
+          }
+          return [];
+        } catch (err) {
+          console.error(`Error fetching detail entries for plant ${row.plant}:`, err);
+          return [];
+        }
+      });
+
+      const results = await Promise.all(fetchPromises);
+      let allEntries = results.flat();
+
+      // Additional client-side filter by reason if selectedReason is active
+      if (selectedReason) {
+        allEntries = allEntries.filter(entry => {
+          const r = String(entry.mortality_reason || entry.reason || '').toLowerCase();
+          return r.includes(selectedReason.toLowerCase());
+        });
+      }
+
+      if (allEntries.length > 0) {
+        let sNo = 1;
+        const exportData = allEntries.map((entry) => {
+          // Format multiple feed materials and quantities if present
+          let feedMaterialStr = entry.material || '-';
+          let feedQtyStr = entry.quantity_bags || '-';
+          let feedStockStr = entry.stock_bags || '-';
+          let cumFeedStr = entry.cum_feed || '-';
+
+          if (entry.materials && Array.isArray(entry.materials) && entry.materials.length > 0) {
+            feedMaterialStr = entry.materials.map(m => m.material_label || m.material || '-').join(', ');
+            feedQtyStr = entry.materials.map(m => m.qty || '0').join(', ');
+            feedStockStr = entry.materials.map(m => m.stock || '0').join(', ');
+            cumFeedStr = entry.materials.map(m => m.cum_feed || '-').join(', ');
+          }
+
+          return {
+            "S.No": sNo++,
+            "Entry Date": entry.date || entry.period_date || '-',
+            "Plant Code": entry.plant_code || entry.plant || '-',
+            "Plant Name": entry.plant_name || '-',
+            "Farmer / Farm Code": entry.farmer || '-',
+            "Farmer Name": entry.farmer_name || '-',
+            "Batch No": entry.batch || '-',
+            "Age (Days)": entry.age || '-',
+            "Housed Chicks": entry.housed || '-',
+            "Current Stock": entry.stock || '-',
+            "Mortality Count": Number(entry.mortality) || 0,
+            "Mortality Reason": entry.mortality_reason || entry.reason || 'Not Specified',
+            "Cum Mortality %": entry.cum_mortality_percentage ? `${entry.cum_mortality_percentage}%` : '-',
+            "Body Weight (g)": entry.body_weight || '-',
+            "Farm Maintenance": entry.farms_maintenance || '-',
+            "Litter Quality": entry.litter_quality || '-',
+            "Drinker Cleaning": entry.drinker_cleaning || '-',
+            "Feed Material": feedMaterialStr,
+            "Feed Bags (Qty)": feedQtyStr,
+            "Feed Stock Bags": feedStockStr,
+            "Cum Feed": cumFeedStr,
+            "Treatment": entry.treatment || '-',
+            "Posted By": entry.user_display_name || entry.user_id || '-'
+          };
+        });
+
+        const reasonSuffix = selectedReason ? `_${selectedReason.replace(/\s+/g, '_')}` : '';
+        const fileName = `Broiler_Farm_Activity_Details${reasonSuffix}_${period}_${fromDate}_to_${toDate}.xlsx`;
+        ExcelExport(exportData, fileName);
+      } else {
+        // If no detailed entries found, export plant summary
+        const summaryExportData = filteredReportData.map(item => ({
+          "Period Date": item.period_date,
+          "Plant Code": item.plant,
+          "Plant Name": item.plant_name,
+          "Entries Posted": item.posted,
+          "Total Mortality": item.total_mortality || 0,
+          "Mortality Reasons": item.mortality_reasons || 'None',
+          "Active User Count": item.user_count,
+          "User List": item.usernames || '-'
+        }));
+        const reasonSuffix = selectedReason ? `_${selectedReason.replace(/\s+/g, '_')}` : '';
+        ExcelExport(summaryExportData, `Broiler_Plant_Summary${reasonSuffix}_${period}_${fromDate}_to_${toDate}.xlsx`);
+      }
+    } catch (err) {
+      console.error("Export process encountered an error:", err);
+      alert("Failed to export detailed data. Please try again.");
+    } finally {
+      setExportingDetails(false);
+    }
+  };
+
+  const handleExportDetailedFarmActivities = () => {
+    if (!farmActivityDetails || !farmActivityDetails.entries || farmActivityDetails.entries.length === 0) {
+      return;
+    }
+    const exportData = farmActivityDetails.entries.map((entry, idx) => ({
+      "S.No": idx + 1,
+      "Entry Date": entry.date || farmActivityDetails.date,
+      "Plant Code": entry.plant || farmActivityDetails.plant,
+      "Plant Name": farmActivityDetails.plant_name,
+      "Farmer / Farm Code": entry.farmer || '-',
+      "Farmer Name": entry.farmer_name || '-',
+      "Batch No": entry.batch || '-',
+      "Age (Days)": entry.age || '-',
+      "Housed Chicks": entry.housed || '-',
+      "Current Stock": entry.stock || '-',
+      "Mortality Count": Number(entry.mortality) || 0,
+      "Mortality Reason": entry.mortality_reason || entry.reason || 'Not Specified',
+      "Cum Mortality %": entry.cum_mortality_percentage ? `${entry.cum_mortality_percentage}%` : '-',
+      "Body Weight (g)": entry.body_weight || '-',
+      "Treatment": entry.treatment || '-',
+      "Feed Material": Array.isArray(entry.materials) && entry.materials.length > 0
+        ? entry.materials.map(m => m.material_label || m.material).join(', ')
+        : (entry.material || '-'),
+      "Feed Quantity": Array.isArray(entry.materials) && entry.materials.length > 0
+        ? entry.materials.map(m => m.qty || 0).join(', ')
+        : (entry.quantity_bags || '-'),
+      "Posted By": entry.user_display_name || entry.user_id || '-'
     }));
-    ExcelExport(exportData, `Broiler_Entries_Report_${period}_${fromDate}_to_${toDate}.xlsx`);
+
+    const plantLabel = (farmActivityDetails.plant_name || 'Plant').replace(/\s+/g, '_');
+    const reasonSuffix = selectedReason ? `_${selectedReason.replace(/\s+/g, '_')}` : '';
+    ExcelExport(exportData, `Farm_Activities_${plantLabel}${reasonSuffix}_${farmActivityDetails.date}.xlsx`);
   };
 
   const handleExportLogins = () => {
@@ -333,6 +512,187 @@ const BroilerDashBoard = () => {
       "Total Logins": item.login_count
     }));
     ExcelExport(exportData, `Broiler_Logins_Report_${period}_${fromDate}_to_${toDate}.xlsx`);
+  };
+
+  // ── Bill of Supply Section ──────────────────────────────────
+  const [bosData, setBosData] = useState([]);
+  const [bosLoading, setBosLoading] = useState(false);
+  const [bosCustomerMap, setBosCustomerMap] = useState({});
+  const [bosFarmerMap, setBosFarmerMap] = useState({});
+  const [bosPlants, setBosPlants] = useState([]);
+  // BOS filter states
+  const [bosFromDate, setBosFromDate] = useState('');
+  const [bosToDate, setBosToDate] = useState('');
+  const [bosSearchText, setBosSearchText] = useState('');
+  const [bosSelectedPlant, setBosSelectedPlant] = useState('');
+  const [bosSelectedCustomer, setBosSelectedCustomer] = useState('');
+  const [bosSelectedFarmer, setBosSelectedFarmer] = useState('');
+  const [bosCurrentPage, setBosCurrentPage] = useState(1);
+  const bosItemsPerPage = 10;
+
+  const fetchBosData = async () => {
+    setBosLoading(true);
+    try {
+      const [bosRes, custRes, farmRes, plantRes] = await Promise.allSettled([
+        axios.get('broiler/bill-of-supply/getAll'),
+        axios.get('broiler/farmer/get-customer/all'),
+        axios.get('broiler/farmer/get-customer/F'),
+        axios.get('broiler/plant/getAll'),
+      ]);
+
+      if (bosRes.status === 'fulfilled' && bosRes.value.data?.status) {
+        const parsed = (bosRes.value.data.data || []).map(item => {
+          let raw = item.raw_data;
+          if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = {}; } }
+          return { ...item, raw_data: raw };
+        });
+        setBosData(parsed);
+      }
+
+      const custMap = {};
+      if (custRes.status === 'fulfilled' && custRes.value.data?.success) {
+        custRes.value.data.data.forEach(c => { if (c.customer_no) custMap[c.customer_no] = c.customer_name || c.customer_no; });
+      }
+      setBosCustomerMap(custMap);
+
+      const farmMap = {};
+      if (farmRes.status === 'fulfilled' && farmRes.value.data?.success) {
+        farmRes.value.data.data.forEach(f => { if (f.customer_no) farmMap[f.customer_no] = f.customer_name || f.customer_no; });
+      }
+      setBosFarmerMap(farmMap);
+
+      if (plantRes.status === 'fulfilled' && plantRes.value.data?.success) {
+        setBosPlants(plantRes.value.data.data || []);
+      }
+    } catch (err) {
+      console.error('Error fetching Bill of Supply data:', err);
+    } finally {
+      setBosLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchBosData(); }, []);
+
+  const bosResolveName = (map1, map2, code, nameField, item) => {
+    if (!code) return '-';
+    const name = nameField || map1[code] || map2[code] || null;
+    if (name && name !== code) return `${code} - ${name}`;
+    return code;
+  };
+
+  const bosResolveCustomer = (item) => {
+    const code = item.customer || item.raw_data?.customer || '';
+    const custDetails = (() => { const d = item.customer_details || item.raw_data?.customer_details || {}; if (typeof d === 'string') { try { return JSON.parse(d); } catch { return {}; } } return d; })();
+    const name = (item.customer_name && item.customer_name !== code ? item.customer_name : null) || custDetails?.customer_name || custDetails?.name1 || (code ? bosCustomerMap[code] : null) || (code ? bosFarmerMap[code] : null) || null;
+    if (!code) return '-';
+    if (name && name !== code) return `${code} - ${name}`;
+    return code;
+  };
+
+  const bosResolveFarmer = (item) => {
+    const farmDetails = (() => { const d = item.farmer_details || item.raw_data?.farmer_details || {}; if (typeof d === 'string') { try { return JSON.parse(d); } catch { return {}; } } return d; })();
+    const code = item.farmer || item.raw_data?.farmer || farmDetails?.farmer_supplier || '';
+    const name = (item.farmer_name && item.farmer_name !== code ? item.farmer_name : null) || farmDetails?.farmer_name || farmDetails?.name1 || (code ? bosFarmerMap[code] : null) || (code ? bosCustomerMap[code] : null) || null;
+    if (!code) return '-';
+    if (name && name !== code) return `${code} - ${name}`;
+    return code;
+  };
+
+  const bosGetLoadTotals = (item) => {
+    let details = item?.load_details;
+    if (typeof details === 'string') { try { details = JSON.parse(details); } catch { details = []; } }
+    if (!Array.isArray(details)) details = [];
+    return details.reduce((acc, row) => {
+      acc.birds += Number(row.birdQty) || 0;
+      acc.netWeight += Number(row.weight) || 0;
+      return acc;
+    }, { birds: 0, netWeight: 0 });
+  };
+
+  const bosGetAvgWeight = (item) => {
+    const { birds, netWeight } = bosGetLoadTotals(item);
+    if (birds > 0 && netWeight > 0) return (netWeight / birds * 1000).toFixed(0);
+    const aw = item.avg_weight || item.raw_data?.avg_weight;
+    return aw ? Number(aw).toFixed(0) : '-';
+  };
+
+  // Derive unique customers and farmers for filter dropdowns
+  const bosUniqueCustomers = [...new Map(bosData.map(d => {
+    const code = d.customer || d.raw_data?.customer || '';
+    return [code, code];
+  }).filter(([k]) => k)).values()];
+
+  const bosUniqueFarmers = [...new Map(bosData.map(d => {
+    const code = d.farmer || d.raw_data?.farmer || '';
+    return [code, code];
+  }).filter(([k]) => k)).values()];
+
+  const bosParseDate = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const bosFilteredData = bosData.filter(item => {
+    const itemDate = bosParseDate(item.date);
+    if (bosFromDate && itemDate < bosFromDate) return false;
+    if (bosToDate && itemDate > bosToDate) return false;
+    if (bosSelectedPlant && String(item.plant) !== String(bosSelectedPlant)) return false;
+    const custCode = item.customer || item.raw_data?.customer || '';
+    if (bosSelectedCustomer && custCode !== bosSelectedCustomer) return false;
+    const farmCode = item.farmer || item.raw_data?.farmer || '';
+    if (bosSelectedFarmer && farmCode !== bosSelectedFarmer) return false;
+    if (bosSearchText) {
+      const q = bosSearchText.toLowerCase();
+      const custLabel = bosResolveCustomer(item).toLowerCase();
+      const farmLabel = bosResolveFarmer(item).toLowerCase();
+      const plantLabel = (item.plant_name || item.plant || '').toLowerCase();
+      const dcLabel = (item.dc_no || '').toLowerCase();
+      if (!custLabel.includes(q) && !farmLabel.includes(q) && !plantLabel.includes(q) && !dcLabel.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const bosTotalPages = Math.ceil(bosFilteredData.length / bosItemsPerPage);
+  const bosStartIdx = (bosCurrentPage - 1) * bosItemsPerPage;
+  const bosPaginatedData = bosFilteredData.slice(bosStartIdx, bosStartIdx + bosItemsPerPage);
+
+  // Aggregated summary for BOS dashboard cards
+  const bosSummary = bosFilteredData.reduce((acc, item) => {
+    const { birds, netWeight } = bosGetLoadTotals(item);
+    acc.totalBills += 1;
+    acc.totalBirds += birds;
+    acc.totalWeight += netWeight;
+    acc.totalValue += Number(item.bill_value || item.raw_data?.bill_value || 0);
+    return acc;
+  }, { totalBills: 0, totalBirds: 0, totalWeight: 0, totalValue: 0 });
+
+  const handleBosExport = () => {
+    if (!bosFilteredData.length) { alert('No data to export.'); return; }
+    const exportRows = bosFilteredData.map((item, idx) => {
+      const { birds, netWeight } = bosGetLoadTotals(item);
+      const avgWt = bosGetAvgWeight(item);
+      return {
+        'S.No': idx + 1,
+        'Date': bosParseDate(item.date) || '-',
+        'DC No': item.dc_no || '-',
+        'Plant': item.plant_name || item.plant || '-',
+        'Customer': bosResolveCustomer(item),
+        'Farmer': bosResolveFarmer(item),
+        'Bird Qty': birds || Number(item.bird_qty || item.raw_data?.bird_qty || 0),
+        'Net Weight (kg)': netWeight || Number(item.net_weight || item.raw_data?.net_weight || 0),
+        'Avg Weight (g)': avgWt,
+        'Rate (₹/kg)': Number(item.rate || item.raw_data?.rate || 0),
+        'Bill Value (₹)': Number(item.bill_value || item.raw_data?.bill_value || 0),
+        'Status': item.sap_status || item.status || 'Pending',
+      };
+    });
+    const suffix = bosFromDate && bosToDate ? `_${bosFromDate}_to_${bosToDate}` : '';
+    ExcelExport(exportRows, `BillOfSupply_Report${suffix}.xlsx`);
   };
 
   // Chart transformations
@@ -536,8 +896,16 @@ const BroilerDashBoard = () => {
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-8">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
           <div>
-            <h3 className="text-xl font-bold text-gray-950">Farm Activity Report</h3>
-            <p className="text-sm text-gray-500">Farm activity entries per plant — click a count to view farmer-wise details.</p>
+            <div className="flex items-center gap-2">
+              <h3 className="text-xl font-bold text-gray-950">Farm Activity Report</h3>
+              {selectedReason && (
+                <span className="px-2.5 py-0.5 bg-rose-100 text-rose-700 rounded-full text-xs font-bold flex items-center gap-1">
+                  <FiAlertCircle size={12} />
+                  Reason: {selectedReason}
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-gray-500 mt-0.5">Farm activity entries per plant — click a count to view farmer-wise details.</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
@@ -551,6 +919,30 @@ const BroilerDashBoard = () => {
               <option value="weekly">Weekly View</option>
               <option value="monthly">Monthly View</option>
             </select>
+
+            {/* Mortality Reason Dropdown Filter */}
+            <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-xl p-1.5 px-2.5">
+              <span className="text-[10px] font-bold text-gray-400 uppercase">Reason</span>
+              <select
+                value={selectedReason}
+                onChange={(e) => handleFilterChange('reason', e.target.value)}
+                className="bg-transparent outline-none text-xs font-semibold text-gray-700 cursor-pointer max-w-[140px]"
+              >
+                <option value="">All Reasons</option>
+                {allKnownReasons.map((r, idx) => (
+                  <option key={idx} value={r}>{r}</option>
+                ))}
+              </select>
+              {selectedReason && (
+                <button
+                  onClick={() => handleFilterChange('reason', '')}
+                  className="text-gray-400 hover:text-red-500 text-xs font-bold cursor-pointer"
+                  title="Clear reason filter"
+                >
+                  <FiX size={13} />
+                </button>
+              )}
+            </div>
 
             {/* From Date */}
             <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-200 rounded-xl p-2 px-2.5">
@@ -593,11 +985,19 @@ const BroilerDashBoard = () => {
 
             {/* Export */}
             <button
-              onClick={handleExportEntries}
-              className="px-4 py-2 bg-orange-50 text-orange-600 hover:bg-orange-500 hover:text-white border border-orange-100 rounded-xl flex items-center gap-2 text-xs font-semibold transition-all shadow-sm"
+              onClick={handleExportDetailedReport}
+              disabled={exportingDetails}
+              className={`px-4 py-2 bg-orange-50 text-orange-600 hover:bg-orange-500 hover:text-white border border-orange-100 rounded-xl flex items-center gap-2 text-xs font-semibold transition-all shadow-sm ${
+                exportingDetails ? 'opacity-70 cursor-wait' : 'cursor-pointer'
+              }`}
+              title="Download detailed Excel report with Entry Date, Plant, Farm, Mortality Count, and Mortality Reason"
             >
-              <LuImport size={14} />
-              <span>Export Excel</span>
+              {exportingDetails ? (
+                <LuRefreshCw className="animate-spin" size={14} />
+              ) : (
+                <LuImport size={14} />
+              )}
+              <span>{exportingDetails ? "Exporting Details..." : "Export Excel"}</span>
             </button>
           </div>
         </div>
@@ -618,6 +1018,7 @@ const BroilerDashBoard = () => {
                 paginatedData.map((row, idx) => {
                   const rowKey = `${row.period_date}-${row.plant}-${idx}`;
                   const isExpanded = expandedRow === rowKey;
+
                   return (
                     <React.Fragment key={idx}>
                       <tr className={`hover:bg-gray-50 transition-all cursor-pointer ${isExpanded ? 'bg-orange-50/50' : ''}`} onClick={() => handleRowExpand(rowKey, row)}>
@@ -627,7 +1028,7 @@ const BroilerDashBoard = () => {
                         <td className="px-6 py-4 text-center">
                           <span
                             className="px-3 py-1 bg-orange-50 text-orange-600 font-bold rounded-full text-xs cursor-pointer hover:bg-orange-100 hover:shadow-md transition-all inline-flex items-center gap-1"
-                          title="Click to view farmer details"
+                            title="Click to view farmer details"
                           >
                             {row.posted}
                             {isExpanded ? <FiChevronUp size={12} /> : <FiChevronDown size={12} />}
@@ -649,174 +1050,251 @@ const BroilerDashBoard = () => {
                                 </div>
                               ) : farmActivityDetails ? (
                                 <div className="space-y-3">
-                                  {/* Farmer-level Entries Table */}
+                                  {/* Farmer-level Entries Table Header with Search and Export */}
                                   <div>
-                                    <h4 className="text-sm font-bold text-gray-800 mb-3 flex items-center gap-2">
-                                      <FiActivity className="text-orange-500" size={15} />
-                                      Farm Activity Entries — {farmActivityDetails.plant_name}
-                                      <span className="ml-1 px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full text-[10px] font-bold">{farmActivityDetails.summary.total_entries} entries · {farmActivityDetails.summary.unique_farmers} farmers</span>
-                                    </h4>
+                                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3">
+                                      <h4 className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                                        <FiActivity className="text-orange-500" size={15} />
+                                        Farm Activity Entries — {farmActivityDetails.plant_name}
+                                        <span className="ml-1 px-2 py-0.5 bg-orange-100 text-orange-600 rounded-full text-[10px] font-bold">
+                                          {farmActivityDetails.summary.total_entries} entries · {farmActivityDetails.summary.unique_farmers} farmers
+                                        </span>
+                                        {selectedReason && (
+                                          <span className="px-2 py-0.5 bg-rose-100 text-rose-700 rounded-full text-[10px] font-bold">
+                                            Reason: {selectedReason}
+                                          </span>
+                                        )}
+                                      </h4>
 
-                                    <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm">
-                                      <table className="min-w-full text-xs">
-                                        <thead>
-                                          <tr className="bg-white text-gray-500 font-semibold text-[10px] uppercase tracking-wider">
-                                            <th className="px-3 py-2.5 text-left">Farmer</th>
-                                            <th className="px-3 py-2.5 text-left">Batch</th>
-                                            <th className="px-3 py-2.5 text-center">Age</th>
-                                            <th className="px-3 py-2.5 text-center">Housed</th>
-                                            <th className="px-3 py-2.5 text-center">Stock</th>
-                                            <th className="px-3 py-2.5 text-center">Mortality</th>
-                                            <th className="px-3 py-2.5 text-center">Photo</th>
-                                            <th className="px-3 py-2.5 text-center">Cum Mort %</th>
-                                            <th className="px-3 py-2.5 text-center">Body Wt</th>
-                                            <th className="px-3 py-2.5 text-center">Farm Maint.</th>
-                                            <th className="px-3 py-2.5 text-center">Litter Qlty</th>
-                                            <th className="px-3 py-2.5 text-center">Drinker Clean</th>
-                                            <th className="px-3 py-2.5 text-left">Material</th>
-                                            <th className="px-3 py-2.5 text-center">Feed Bags (Qty)</th>
-                                            <th className="px-3 py-2.5 text-center">Balance Stock</th>
-                                            <th className="px-3 py-2.5 text-center">Cum Feed</th>
-                                            <th className="px-3 py-2.5 text-left">Treatment</th>
-                                            <th className="px-3 py-2.5 text-left">Posted By</th>
-                                          </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-gray-100">
-                                          {farmActivityDetails.entries.length > 0 ? (
-                                            farmActivityDetails.entries.map((entry, eIdx) => (
-                                              <tr key={eIdx} className="bg-white hover:bg-gray-50 transition-all">
-                                                <td className="px-3 py-2.5 whitespace-nowrap">
-                                                  {entry.farmer_name ? (
-                                                    <>
-                                                      <div className="font-semibold text-gray-800">{entry.farmer_name}</div>
-                                                      <div className="text-[10px] text-gray-400 font-medium mt-0.5">{entry.farmer}</div>
-                                                    </>
-                                                  ) : (
-                                                    <>
-                                                      <div className="font-semibold text-gray-800">{entry.farmer || '-'}</div>
-                                                      <div className="text-[10px] text-gray-400 font-medium mt-0.5">Name N/A</div>
-                                                    </>
-                                                  )}
-                                                </td>
-                                                <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{entry.batch || '-'}</td>
-                                                <td className="px-3 py-2.5 text-center text-gray-600">{entry.age || '-'}</td>
-                                                <td className="px-3 py-2.5 text-center">
-                                                  <span className="px-2 py-0.5 bg-green-50 text-green-700 rounded-full font-semibold">{entry.housed || '-'}</span>
-                                                </td>
-                                                <td className="px-3 py-2.5 text-center">
-                                                  <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full font-semibold">{entry.stock || '-'}</span>
-                                                </td>
-                                                <td className="px-3 py-2.5 text-center">
-                                                  <span className={`px-2 py-0.5 rounded-full font-semibold ${Number(entry.mortality) > 0 ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-500'}`}>
-                                                    {entry.mortality || '0'}
-                                                  </span>
-                                                </td>
-                                                {/* Farm Activity Photo Column */}
-                                                <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                                                  {((entry.photos && entry.photos.length > 0) || entry.upload_mortality || entry.photo_url || 
-                                                    (entry.start_km_photos && entry.start_km_photos.length > 0) || entry.upload_start_km || entry.start_km_photo_url ||
-                                                    (entry.end_km_photos && entry.end_km_photos.length > 0) || entry.upload_end_km || entry.end_km_photo_url) ? (
-                                                    <button
-                                                      type="button"
-                                                      onClick={(e) => { e.stopPropagation(); openPhotoModal(entry); }}
-                                                      className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 hover:text-amber-900 border border-amber-200/80 rounded-lg font-semibold text-[11px] inline-flex items-center gap-1.5 transition-all shadow-2xs hover:shadow-xs group cursor-pointer"
-                                                      title="Click to view farm activity photos (Mortality, Start KM, End KM)"
-                                                    >
-                                                      <FiImage className="text-amber-600 group-hover:scale-110 transition-transform" size={13} />
-                                                      <span>View Photo</span>
-                                                      {(() => {
-                                                        const mCount = entry.photos?.length || (entry.upload_mortality ? 1 : 0);
-                                                        const sCount = entry.start_km_photos?.length || (entry.upload_start_km ? 1 : 0);
-                                                        const eCount = entry.end_km_photos?.length || (entry.upload_end_km ? 1 : 0);
-                                                        const total = mCount + sCount + eCount;
-                                                        return total > 1 ? (
-                                                          <span className="ml-0.5 px-1 py-0.2 bg-amber-200 text-amber-800 rounded-full text-[9px] font-bold">
-                                                            {total}
-                                                          </span>
-                                                        ) : null;
-                                                      })()}
-                                                    </button>
-                                                  ) : (
-                                                    <span className="text-gray-300 font-medium">-</span>
-                                                  )}
-                                                </td>
-                                                <td className="px-3 py-2.5 text-center text-gray-600">{entry.cum_mortality_percentage || '-'}%</td>
-                                                <td className="px-3 py-2.5 text-center">
-                                                  <span className="px-2 py-0.5 bg-purple-50 text-purple-700 rounded-full font-semibold">{entry.body_weight || '-'}</span>
-                                                </td>
-                                                <td className="px-3 py-2.5 text-center text-gray-600">{entry.farms_maintenance || '-'}</td>
-                                                <td className="px-3 py-2.5 text-center text-gray-600">{entry.litter_quality || '-'}</td>
-                                                <td className="px-3 py-2.5 text-center text-gray-600">{entry.drinker_cleaning || '-'}</td>
-                                                {/* Material Details - supports multiple materials */}
-                                                {entry.materials && Array.isArray(entry.materials) && entry.materials.length > 0 ? (
-                                                  <>
-                                                    <td className="px-3 py-2.5 text-left">
-                                                      <div className="flex flex-col gap-1">
-                                                        {entry.materials.map((m, mIdx) => (
-                                                          <span key={mIdx} className="px-2 py-0.5 bg-teal-50 text-teal-700 rounded-full font-semibold text-[10px] whitespace-nowrap block w-fit">
-                                                            {m.material_label || m.material || '-'}
-                                                          </span>
-                                                        ))}
-                                                      </div>
+                                      <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                                        {/* Entry search by farmer or reason */}
+                                        <div className="relative flex-1 sm:flex-none">
+                                          <span className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-gray-400">
+                                            <RiSearchLine size={13} />
+                                          </span>
+                                          <input
+                                            type="text"
+                                            placeholder="Search Farm / Reason..."
+                                            value={entrySearchText}
+                                            onChange={(e) => setEntrySearchText(e.target.value)}
+                                            className="pl-8 pr-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs outline-none focus:ring-2 focus:ring-orange-500 w-full sm:w-48 shadow-2xs font-medium"
+                                          />
+                                        </div>
+
+                                        {entrySearchText && (
+                                          <button
+                                            onClick={() => setEntrySearchText('')}
+                                            className="text-xs text-gray-400 hover:text-red-500 font-semibold px-1 cursor-pointer"
+                                          >
+                                            Clear
+                                          </button>
+                                        )}
+
+                                        <button
+                                          type="button"
+                                          onClick={handleExportDetailedFarmActivities}
+                                          className="px-3 py-1.5 bg-white hover:bg-orange-50 text-orange-600 border border-orange-200 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
+                                          title="Export detailed entries with Mortality Reasons to Excel"
+                                        >
+                                          <LuImport size={13} />
+                                          <span>Export Farm Details</span>
+                                        </button>
+                                      </div>
+                                    </div>
+
+                                    {/* Entries Table */}
+                                    {(() => {
+                                      const displayedEntries = (farmActivityDetails.entries || []).filter(entry => {
+                                        if (!entrySearchText) return true;
+                                        const query = entrySearchText.toLowerCase();
+                                        return (
+                                          String(entry.farmer_name || '').toLowerCase().includes(query) ||
+                                          String(entry.farmer || '').toLowerCase().includes(query) ||
+                                          String(entry.batch || '').toLowerCase().includes(query) ||
+                                          String(entry.mortality_reason || entry.reason || '').toLowerCase().includes(query) ||
+                                          String(entry.treatment || '').toLowerCase().includes(query)
+                                        );
+                                      });
+
+                                      return (
+                                        <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-sm bg-white">
+                                          <table className="min-w-full text-xs">
+                                            <thead>
+                                              <tr className="bg-gray-50 text-gray-500 font-semibold text-[10px] uppercase tracking-wider border-b border-gray-200">
+                                                <th className="px-3 py-2.5 text-left">Farmer / Farm</th>
+                                                <th className="px-3 py-2.5 text-left">Batch</th>
+                                                <th className="px-3 py-2.5 text-center">Age</th>
+                                                <th className="px-3 py-2.5 text-center">Housed</th>
+                                                <th className="px-3 py-2.5 text-center">Stock</th>
+                                                <th className="px-3 py-2.5 text-center">Mortality</th>
+                                                <th className="px-3 py-2.5 text-center bg-rose-50/70 text-rose-800">Mortality Reason</th>
+                                                <th className="px-3 py-2.5 text-center">Photo</th>
+                                                <th className="px-3 py-2.5 text-center">Cum Mort %</th>
+                                                <th className="px-3 py-2.5 text-center">Body Wt</th>
+                                                <th className="px-3 py-2.5 text-center">Farm Maint.</th>
+                                                <th className="px-3 py-2.5 text-center">Litter Qlty</th>
+                                                <th className="px-3 py-2.5 text-center">Drinker Clean</th>
+                                                <th className="px-3 py-2.5 text-left">Material</th>
+                                                <th className="px-3 py-2.5 text-center">Feed Bags (Qty)</th>
+                                                <th className="px-3 py-2.5 text-center">Balance Stock</th>
+                                                <th className="px-3 py-2.5 text-center">Cum Feed</th>
+                                                <th className="px-3 py-2.5 text-left">Treatment</th>
+                                                <th className="px-3 py-2.5 text-left">Posted By</th>
+                                              </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-gray-100">
+                                              {displayedEntries.length > 0 ? (
+                                                displayedEntries.map((entry, eIdx) => (
+                                                  <tr key={eIdx} className="bg-white hover:bg-gray-50 transition-all">
+                                                    <td className="px-3 py-2.5 whitespace-nowrap">
+                                                      {entry.farmer_name ? (
+                                                        <>
+                                                          <div className="font-semibold text-gray-800">{entry.farmer_name}</div>
+                                                          <div className="text-[10px] text-gray-400 font-medium mt-0.5">{entry.farmer}</div>
+                                                        </>
+                                                      ) : (
+                                                        <>
+                                                          <div className="font-semibold text-gray-800">{entry.farmer || '-'}</div>
+                                                          <div className="text-[10px] text-gray-400 font-medium mt-0.5">Name N/A</div>
+                                                        </>
+                                                      )}
+                                                    </td>
+                                                    <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{entry.batch || '-'}</td>
+                                                    <td className="px-3 py-2.5 text-center text-gray-600">{entry.age || '-'}</td>
+                                                    <td className="px-3 py-2.5 text-center">
+                                                      <span className="px-2 py-0.5 bg-green-50 text-green-700 rounded-full font-semibold">{entry.housed || '-'}</span>
                                                     </td>
                                                     <td className="px-3 py-2.5 text-center">
-                                                      <div className="flex flex-col gap-1 items-center">
-                                                        {entry.materials.map((m, mIdx) => (
-                                                          <span key={mIdx} className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-full font-semibold">
-                                                            {m.qty || '0'}
-                                                          </span>
-                                                        ))}
-                                                      </div>
+                                                      <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full font-semibold">{entry.stock || '-'}</span>
                                                     </td>
                                                     <td className="px-3 py-2.5 text-center">
-                                                      <div className="flex flex-col gap-1 items-center">
-                                                        {entry.materials.map((m, mIdx) => (
-                                                          <span key={mIdx} className="px-2 py-0.5 bg-cyan-50 text-cyan-700 rounded-full font-semibold">
-                                                            {m.stock || '0'}
-                                                          </span>
-                                                        ))}
-                                                      </div>
-                                                    </td>
-                                                    <td className="px-3 py-2.5 text-center">
-                                                      <div className="flex flex-col gap-1 items-center">
-                                                        {entry.materials.map((m, mIdx) => (
-                                                          <span key={mIdx} className="text-gray-600">
-                                                            {m.cum_feed || '-'}
-                                                          </span>
-                                                        ))}
-                                                      </div>
-                                                    </td>
-                                                  </>
-                                                ) : (
-                                                  <>
-                                                    <td className="px-3 py-2.5 text-left">
-                                                      <span className="px-2 py-0.5 bg-teal-50 text-teal-700 rounded-full font-semibold text-[10px] whitespace-nowrap">
-                                                        {entry.material || '-'}
+                                                      <span className={`px-2 py-0.5 rounded-full font-semibold ${Number(entry.mortality) > 0 ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-500'}`}>
+                                                        {entry.mortality || '0'}
                                                       </span>
                                                     </td>
-                                                    <td className="px-3 py-2.5 text-center">
-                                                      <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-full font-semibold">{entry.quantity_bags || '-'}</span>
+
+                                                    {/* Mortality Reason Column */}
+                                                    <td className="px-3 py-2.5 text-center whitespace-nowrap bg-rose-50/30">
+                                                      {(entry.mortality_reason || entry.reason) ? (
+                                                        <span className="px-2.5 py-1 bg-rose-50 text-rose-700 border border-rose-200/80 rounded-full font-bold text-[11px] shadow-2xs inline-block">
+                                                          {entry.mortality_reason || entry.reason}
+                                                        </span>
+                                                      ) : (
+                                                        <span className="text-gray-300 font-medium">-</span>
+                                                      )}
                                                     </td>
-                                                    <td className="px-3 py-2.5 text-center">
-                                                      <span className="px-2 py-0.5 bg-cyan-50 text-cyan-700 rounded-full font-semibold">{entry.stock_bags || '-'}</span>
+
+                                                    {/* Farm Activity Photo Column */}
+                                                    <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                                                      {((entry.photos && entry.photos.length > 0) || entry.upload_mortality || entry.photo_url || 
+                                                        (entry.start_km_photos && entry.start_km_photos.length > 0) || entry.upload_start_km || entry.start_km_photo_url ||
+                                                        (entry.end_km_photos && entry.end_km_photos.length > 0) || entry.upload_end_km || entry.end_km_photo_url) ? (
+                                                        <button
+                                                          type="button"
+                                                          onClick={(e) => { e.stopPropagation(); openPhotoModal(entry); }}
+                                                          className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 hover:text-amber-900 border border-amber-200/80 rounded-lg font-semibold text-[11px] inline-flex items-center gap-1.5 transition-all shadow-2xs hover:shadow-xs group cursor-pointer"
+                                                          title="Click to view farm activity photos (Mortality, Start KM, End KM)"
+                                                        >
+                                                          <FiImage className="text-amber-600 group-hover:scale-110 transition-transform" size={13} />
+                                                          <span>View Photo</span>
+                                                          {(() => {
+                                                            const mCount = entry.photos?.length || (entry.upload_mortality ? 1 : 0);
+                                                            const sCount = entry.start_km_photos?.length || (entry.upload_start_km ? 1 : 0);
+                                                            const eCount = entry.end_km_photos?.length || (entry.upload_end_km ? 1 : 0);
+                                                            const total = mCount + sCount + eCount;
+                                                            return total > 1 ? (
+                                                              <span className="ml-0.5 px-1 py-0.2 bg-amber-200 text-amber-800 rounded-full text-[9px] font-bold">
+                                                                {total}
+                                                              </span>
+                                                            ) : null;
+                                                          })()}
+                                                        </button>
+                                                      ) : (
+                                                        <span className="text-gray-300 font-medium">-</span>
+                                                      )}
                                                     </td>
-                                                    <td className="px-3 py-2.5 text-center text-gray-600">{entry.cum_feed || '-'}</td>
-                                                  </>
-                                                )}
-                                                <td className="px-3 py-2.5 text-gray-600 max-w-[120px] truncate" title={entry.treatment}>{entry.treatment || '-'}</td>
-                                                <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{entry.user_display_name}</td>
-                                              </tr>
-                                            ))
-                                          ) : (
-                                            <tr>
-                                              <td colSpan="18" className="px-4 py-6 text-center text-gray-400 font-medium">
-                                                No farm activity entries found for this date and plant.
-                                              </td>
-                                            </tr>
-                                          )}
-                                        </tbody>
-                                      </table>
-                                    </div>
+                                                    <td className="px-3 py-2.5 text-center text-gray-600">{entry.cum_mortality_percentage || '-'}%</td>
+                                                    <td className="px-3 py-2.5 text-center">
+                                                      <span className="px-2 py-0.5 bg-purple-50 text-purple-700 rounded-full font-semibold">{entry.body_weight || '-'}</span>
+                                                    </td>
+                                                    <td className="px-3 py-2.5 text-center text-gray-600">{entry.farms_maintenance || '-'}</td>
+                                                    <td className="px-3 py-2.5 text-center text-gray-600">{entry.litter_quality || '-'}</td>
+                                                    <td className="px-3 py-2.5 text-center text-gray-600">{entry.drinker_cleaning || '-'}</td>
+
+                                                    {/* Material Details - supports multiple materials */}
+                                                    {entry.materials && Array.isArray(entry.materials) && entry.materials.length > 0 ? (
+                                                      <>
+                                                        <td className="px-3 py-2.5 text-left">
+                                                          <div className="flex flex-col gap-1">
+                                                            {entry.materials.map((m, mIdx) => (
+                                                              <span key={mIdx} className="px-2 py-0.5 bg-teal-50 text-teal-700 rounded-full font-semibold text-[10px] whitespace-nowrap block w-fit">
+                                                                {m.material_label || m.material || '-'}
+                                                              </span>
+                                                            ))}
+                                                          </div>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-center">
+                                                          <div className="flex flex-col gap-1 items-center">
+                                                            {entry.materials.map((m, mIdx) => (
+                                                              <span key={mIdx} className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-full font-semibold">
+                                                                {m.qty || '0'}
+                                                              </span>
+                                                            ))}
+                                                          </div>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-center">
+                                                          <div className="flex flex-col gap-1 items-center">
+                                                            {entry.materials.map((m, mIdx) => (
+                                                              <span key={mIdx} className="px-2 py-0.5 bg-cyan-50 text-cyan-700 rounded-full font-semibold">
+                                                                {m.stock || '0'}
+                                                              </span>
+                                                            ))}
+                                                          </div>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-center">
+                                                          <div className="flex flex-col gap-1 items-center">
+                                                            {entry.materials.map((m, mIdx) => (
+                                                              <span key={mIdx} className="text-gray-600">
+                                                                {m.cum_feed || '-'}
+                                                              </span>
+                                                            ))}
+                                                          </div>
+                                                        </td>
+                                                      </>
+                                                    ) : (
+                                                      <>
+                                                        <td className="px-3 py-2.5 text-left">
+                                                          <span className="px-2 py-0.5 bg-teal-50 text-teal-700 rounded-full font-semibold text-[10px] whitespace-nowrap">
+                                                            {entry.material || '-'}
+                                                          </span>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-center">
+                                                          <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-full font-semibold">{entry.quantity_bags || '-'}</span>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-center">
+                                                          <span className="px-2 py-0.5 bg-cyan-50 text-cyan-700 rounded-full font-semibold">{entry.stock_bags || '-'}</span>
+                                                        </td>
+                                                        <td className="px-3 py-2.5 text-center text-gray-600">{entry.cum_feed || '-'}</td>
+                                                      </>
+                                                    )}
+                                                    <td className="px-3 py-2.5 text-gray-600 max-w-[120px] truncate" title={entry.treatment}>{entry.treatment || '-'}</td>
+                                                    <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap">{entry.user_display_name}</td>
+                                                  </tr>
+                                                ))
+                                              ) : (
+                                                <tr>
+                                                  <td colSpan="19" className="px-4 py-6 text-center text-gray-400 font-medium">
+                                                    {entrySearchText
+                                                      ? `No farm activity entries matching "${entrySearchText}".`
+                                                      : "No farm activity entries found for this date and plant."}
+                                                  </td>
+                                                </tr>
+                                              )}
+                                            </tbody>
+                                          </table>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                 </div>
                               ) : (
@@ -855,6 +1333,235 @@ const BroilerDashBoard = () => {
               onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
               disabled={currentPage === totalPages}
               className={`px-3 py-1.5 border rounded-lg text-xs font-semibold ${currentPage === totalPages ? 'text-gray-400 bg-gray-50 border-gray-100 cursor-not-allowed' : 'text-white bg-orange-500 border-orange-500 hover:bg-orange-600'}`}
+            >
+              Next
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* ═══════════ Bill of Supply Section ═══════════ */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-8">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <span className="w-2 h-6 bg-gradient-to-b from-green-500 to-teal-400 rounded-full inline-block" />
+              Bill of Supply
+            </h2>
+            <p className="text-xs text-gray-500 mt-0.5">Farmer &amp; Customer dispatch summary with weights and bill values</p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={fetchBosData}
+              className="px-3 py-2 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-600 rounded-xl flex items-center gap-1.5 text-xs font-semibold transition-all"
+            >
+              <LuRefreshCw size={13} className={bosLoading ? 'animate-spin' : ''} />
+              Refresh
+            </button>
+            <button
+              onClick={handleBosExport}
+              className="px-4 py-2 bg-green-50 text-green-700 hover:bg-green-500 hover:text-white border border-green-200 rounded-xl flex items-center gap-2 text-xs font-semibold transition-all shadow-sm"
+            >
+              <LuImport size={14} />
+              Export Excel
+            </button>
+          </div>
+        </div>
+
+        {/* Summary Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          {[
+            { label: 'Total Bills', value: bosSummary.totalBills, color: 'from-teal-400 to-green-500', icon: '🧾' },
+            { label: 'Total Birds', value: bosSummary.totalBirds.toLocaleString(), color: 'from-orange-400 to-amber-500', icon: '🐔' },
+            { label: 'Net Weight (kg)', value: bosSummary.totalWeight.toLocaleString(undefined, { maximumFractionDigits: 1 }), color: 'from-blue-400 to-indigo-500', icon: '⚖️' },
+            { label: 'Bill Value (₹)', value: bosSummary.totalValue.toLocaleString(undefined, { maximumFractionDigits: 0 }), color: 'from-purple-400 to-pink-500', icon: '💰' },
+          ].map((card, i) => (
+            <div key={i} className="relative bg-white rounded-xl border border-gray-100 p-4 shadow-sm overflow-hidden">
+              <div className={`absolute inset-0 bg-gradient-to-br ${card.color} opacity-5 rounded-xl`} />
+              <div className="flex items-start justify-between">
+                <div>
+                  <p className="text-xs text-gray-500 font-medium">{card.label}</p>
+                  <p className="text-xl font-extrabold text-gray-900 mt-1">{bosLoading ? '—' : card.value}</p>
+                </div>
+                <span className="text-2xl">{card.icon}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Filter Bar */}
+        <div className="flex flex-wrap items-center gap-3 bg-gray-50 rounded-xl p-3 mb-5 border border-gray-100">
+          {/* Search */}
+          <div className="relative flex-1 min-w-[160px] max-w-xs">
+            <RiSearchLine className="absolute top-2.5 left-2.5 text-gray-400" size={14} />
+            <input
+              type="search"
+              placeholder="Search DC No / Customer / Farmer..."
+              value={bosSearchText}
+              onChange={e => { setBosSearchText(e.target.value); setBosCurrentPage(1); }}
+              className="w-full pl-8 pr-3 py-2 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-green-400 bg-white"
+            />
+          </div>
+          {/* From Date */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-semibold text-gray-400 uppercase">From</span>
+            <input
+              type="date"
+              value={bosFromDate}
+              onChange={e => { setBosFromDate(e.target.value); setBosCurrentPage(1); }}
+              className="border border-gray-200 rounded-lg text-xs p-2 bg-white focus:ring-2 focus:ring-green-400 outline-none"
+            />
+          </div>
+          {/* To Date */}
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-semibold text-gray-400 uppercase">To</span>
+            <input
+              type="date"
+              value={bosToDate}
+              onChange={e => { setBosToDate(e.target.value); setBosCurrentPage(1); }}
+              className="border border-gray-200 rounded-lg text-xs p-2 bg-white focus:ring-2 focus:ring-green-400 outline-none"
+            />
+          </div>
+          {/* Plant Filter */}
+          <select
+            value={bosSelectedPlant}
+            onChange={e => { setBosSelectedPlant(e.target.value); setBosCurrentPage(1); }}
+            className="border border-gray-200 rounded-lg text-xs p-2 bg-white focus:ring-2 focus:ring-green-400 outline-none min-w-[130px]"
+          >
+            <option value="">All Plants</option>
+            {bosPlants.map(p => (
+              <option key={p.plant_id} value={p.plant_id}>{p.plant_id} - {p.plant_name || p.plant_id}</option>
+            ))}
+          </select>
+          {/* Customer Filter */}
+          <select
+            value={bosSelectedCustomer}
+            onChange={e => { setBosSelectedCustomer(e.target.value); setBosCurrentPage(1); }}
+            className="border border-gray-200 rounded-lg text-xs p-2 bg-white focus:ring-2 focus:ring-green-400 outline-none min-w-[130px]"
+          >
+            <option value="">All Customers</option>
+            {bosUniqueCustomers.map(code => (
+              <option key={code} value={code}>{bosCustomerMap[code] ? `${code} - ${bosCustomerMap[code]}` : code}</option>
+            ))}
+          </select>
+          {/* Farmer Filter */}
+          <select
+            value={bosSelectedFarmer}
+            onChange={e => { setBosSelectedFarmer(e.target.value); setBosCurrentPage(1); }}
+            className="border border-gray-200 rounded-lg text-xs p-2 bg-white focus:ring-2 focus:ring-green-400 outline-none min-w-[130px]"
+          >
+            <option value="">All Farmers</option>
+            {bosUniqueFarmers.map(code => (
+              <option key={code} value={code}>{bosFarmerMap[code] ? `${code} - ${bosFarmerMap[code]}` : code}</option>
+            ))}
+          </select>
+          {/* Clear Filters */}
+          {(bosSearchText || bosFromDate || bosToDate || bosSelectedPlant || bosSelectedCustomer || bosSelectedFarmer) && (
+            <button
+              onClick={() => { setBosSearchText(''); setBosFromDate(''); setBosToDate(''); setBosSelectedPlant(''); setBosSelectedCustomer(''); setBosSelectedFarmer(''); setBosCurrentPage(1); }}
+              className="px-3 py-2 text-xs font-semibold text-red-500 hover:bg-red-50 rounded-lg border border-red-100 transition-all flex items-center gap-1"
+            >
+              <FiX size={12} /> Clear
+            </button>
+          )}
+          <span className="ml-auto text-xs text-gray-400 font-medium">{bosFilteredData.length} record{bosFilteredData.length !== 1 ? 's' : ''}</span>
+        </div>
+
+        {/* Table */}
+        <div className="overflow-x-auto rounded-xl border border-gray-100 shadow-sm">
+          <table className="min-w-full divide-y divide-gray-100 text-sm">
+            <thead>
+              <tr className="bg-gradient-to-r from-gray-50 to-white text-gray-500 font-semibold text-xs uppercase tracking-wide">
+                <th className="px-4 py-3.5 text-center w-10">#</th>
+                <th className="px-4 py-3.5 text-left">Date</th>
+                <th className="px-4 py-3.5 text-left">DC No</th>
+                <th className="px-4 py-3.5 text-left">Plant</th>
+                <th className="px-4 py-3.5 text-left">Farmer</th>
+                <th className="px-4 py-3.5 text-left">Customer</th>
+                <th className="px-4 py-3.5 text-center">Bird Qty</th>
+                <th className="px-4 py-3.5 text-center">Net Wt (kg)</th>
+                <th className="px-4 py-3.5 text-center">Avg Wt (g)</th>
+                <th className="px-4 py-3.5 text-center">Rate (₹/kg)</th>
+                <th className="px-4 py-3.5 text-center">Bill Value (₹)</th>
+                <th className="px-4 py-3.5 text-center">Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100 text-gray-700">
+              {bosLoading ? (
+                <tr>
+                  <td colSpan="12" className="py-10 text-center">
+                    <div className="flex items-center justify-center gap-2 text-gray-400">
+                      <LuRefreshCw className="animate-spin" size={18} />
+                      <span className="text-sm font-medium">Loading Bill of Supply data...</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : bosPaginatedData.length > 0 ? (
+                bosPaginatedData.map((item, idx) => {
+                  const { birds, netWeight } = bosGetLoadTotals(item);
+                  const avgWt = bosGetAvgWeight(item);
+                  const rate = Number(item.rate || item.raw_data?.rate || 0);
+                  const billValue = Number(item.bill_value || item.raw_data?.bill_value || 0);
+                  const status = item.sap_status || item.status || 'Pending';
+                  const statusColor = status === 'Submitted' || status === 'Posted' ? 'bg-green-50 text-green-700' : status === 'Failed' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700';
+                  return (
+                    <tr key={item.id || idx} className="hover:bg-green-50/30 transition-colors">
+                      <td className="px-4 py-3 text-center text-gray-400 font-medium text-xs">{bosStartIdx + idx + 1}</td>
+                      <td className="px-4 py-3 font-semibold text-gray-900 whitespace-nowrap">{bosParseDate(item.date) || '-'}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-700">{item.dc_no || '-'}</td>
+                      <td className="px-4 py-3 text-xs text-gray-700">{item.plant_name || item.plant || '-'}</td>
+                      <td className="px-4 py-3 text-xs text-gray-700 max-w-[150px] truncate" title={bosResolveFarmer(item)}>{bosResolveFarmer(item)}</td>
+                      <td className="px-4 py-3 text-xs text-gray-700 max-w-[150px] truncate" title={bosResolveCustomer(item)}>{bosResolveCustomer(item)}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="px-2.5 py-0.5 bg-orange-50 text-orange-700 rounded-full font-bold text-xs">{(birds || Number(item.bird_qty || 0)).toLocaleString()}</span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="px-2.5 py-0.5 bg-blue-50 text-blue-700 rounded-full font-bold text-xs">{(netWeight || Number(item.net_weight || 0)).toLocaleString(undefined, { maximumFractionDigits: 1 })}</span>
+                      </td>
+                      <td className="px-4 py-3 text-center text-xs text-gray-700">{avgWt}</td>
+                      <td className="px-4 py-3 text-center text-xs font-semibold text-gray-700">₹{rate.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className="px-2.5 py-0.5 bg-green-50 text-green-700 rounded-full font-bold text-xs">₹{billValue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${statusColor}`}>{status}</span>
+                      </td>
+                    </tr>
+                  );
+                })
+              ) : (
+                <tr>
+                  <td colSpan="12" className="py-10 text-center">
+                    <div className="flex flex-col items-center gap-2 text-gray-400">
+                      <FiFileText size={28} className="text-gray-300" />
+                      <span className="text-sm font-medium">No Bill of Supply records found.</span>
+                      {(bosFromDate || bosToDate || bosSelectedPlant || bosSelectedCustomer || bosSelectedFarmer) && (
+                        <span className="text-xs text-gray-400">Try adjusting your filters.</span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination */}
+        {bosTotalPages > 1 && (
+          <div className="flex justify-end items-center gap-2 mt-5">
+            <button
+              onClick={() => setBosCurrentPage(prev => Math.max(prev - 1, 1))}
+              disabled={bosCurrentPage === 1}
+              className={`px-3 py-1.5 border rounded-lg text-xs font-semibold ${bosCurrentPage === 1 ? 'text-gray-400 bg-gray-50 border-gray-100 cursor-not-allowed' : 'text-white bg-green-500 border-green-500 hover:bg-green-600'}`}
+            >
+              Prev
+            </button>
+            <span className="text-xs text-gray-500 font-semibold px-2">Page {bosCurrentPage} of {bosTotalPages}</span>
+            <button
+              onClick={() => setBosCurrentPage(prev => Math.min(prev + 1, bosTotalPages))}
+              disabled={bosCurrentPage === bosTotalPages}
+              className={`px-3 py-1.5 border rounded-lg text-xs font-semibold ${bosCurrentPage === bosTotalPages ? 'text-gray-400 bg-gray-50 border-gray-100 cursor-not-allowed' : 'text-white bg-green-500 border-green-500 hover:bg-green-600'}`}
             >
               Next
             </button>
@@ -1121,6 +1828,7 @@ const BroilerDashBoard = () => {
                       {photoModal.entry.farmer_name || photoModal.entry.farmer || 'Farmer Entry'}
                       {photoModal.entry.batch ? ` · Batch #${photoModal.entry.batch}` : ''}
                       {isMortality && photoModal.entry.mortality !== undefined ? ` · ${photoModal.entry.mortality} Mortality` : ''}
+                      {isMortality && (photoModal.entry.mortality_reason || photoModal.entry.reason) ? ` · Reason: ${photoModal.entry.mortality_reason || photoModal.entry.reason}` : ''}
                       {isStartKm && photoModal.startKm ? ` · Start: ${photoModal.startKm} KM` : ''}
                       {isEndKm && photoModal.endKm ? ` · End: ${photoModal.endKm} KM` : ''}
                       {photoModal.vehicleNo && (isStartKm || isEndKm) ? ` · 🚗 ${photoModal.vehicleNo}` : ''}

@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Link } from 'react-router-dom'
-import { RiArrowUpSFill, RiDeleteBin6Line, RiSearchLine } from 'react-icons/ri'
+import { RiArrowUpSFill, RiDeleteBin6Line, RiSearchLine, RiRefreshLine } from 'react-icons/ri'
 import { LuImport } from 'react-icons/lu'
 import { TbEdit } from "react-icons/tb";
 import { MdFileDownload, MdDownloadForOffline } from 'react-icons/md';
@@ -12,6 +12,8 @@ import ExcelExport from '../utils/ExcelExport'
 import { CustomDropdown } from '../components/CustomDropdown'
 import { IoCloseSharp } from 'react-icons/io5'
 import { useAuth } from '../auth/AuthContext'
+import { PDFDocument } from 'pdf-lib'
+import SearchableSelect, { SELECT_ALL_VALUE } from '../components/SearchableSelect'
 
 const DC = () => {
 
@@ -35,14 +37,26 @@ const DC = () => {
     const [isBulkDownloadOpen, setIsBulkDownloadOpen] = useState(false);
     const [bulkFromDate, setBulkFromDate] = useState('');
     const [bulkToDate, setBulkToDate] = useState('');
+    const [bulkSelectedPo, setBulkSelectedPo] = useState('');
+    const [bulkFilterTruck, setBulkFilterTruck] = useState('');
+    const [bulkFilterRR, setBulkFilterRR] = useState('');
+    const [bulkFilterMaterial, setBulkFilterMaterial] = useState('');
+    const [bulkFilterStatus, setBulkFilterStatus] = useState('');
     const [isBulkDownloading, setIsBulkDownloading] = useState(false);
     const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
+
+    // Table filter states
+    const [filterTruck, setFilterTruck] = useState('');
+    const [filterRR, setFilterRR] = useState('');
+    const [filterMaterial, setFilterMaterial] = useState('');
+    const [filterStatus, setFilterStatus] = useState('');
 
     const [selectedMaterial, setSelectedMaterial] = useState("")
     const [quantity, setQuantity] = useState(0);
     const [dcId, setDcId] = useState(0);
 
     const [rrOptions, setRROptions] = useState([]);
+    const [poList, setPoList] = useState([]);
     const [materialOption, setMaterialOption] = useState([]);
     const [shipToOptions, setShipToOptions] = useState([]);
     const [dispatchOptions, setDispatchOptions] = useState([]);
@@ -76,7 +90,8 @@ const DC = () => {
     const fetchDropdownData = async (rrNo) => {
         try {
             const { data: poData } = await axios.get(`/po/getAll`);
-            const rr = poData.data;
+            const rr = poData.data || [];
+            setPoList(rr);
             const rrOptions = rr.map((po) => ({
                 label: po.rr_no,
                 value: po.rr_no
@@ -381,8 +396,27 @@ const DC = () => {
 
     // Helper: get DC date from any available date field, as a local YYYY-MM-DD string
     const getDCDateStr = (item) => {
-        const raw = item.createdAt || item.created_at || item.date || item.dc_date || item.challan_date || null;
+        const raw = item.doc_date || item.createdAt || item.created_at || item.date || item.dc_date || item.challan_date || item.updatedAt || null;
         if (!raw) return null;
+        if (typeof raw === 'string') {
+            const trimmed = raw.trim();
+            // Match YYYY-MM-DD or YYYY/MM/DD
+            const ymdMatch = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+            if (ymdMatch) {
+                const y = ymdMatch[1];
+                const m = ymdMatch[2].padStart(2, '0');
+                const d = ymdMatch[3].padStart(2, '0');
+                return `${y}-${m}-${d}`;
+            }
+            // Match DD-MM-YYYY or DD/MM/YYYY
+            const dmyMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+            if (dmyMatch) {
+                const d = dmyMatch[1].padStart(2, '0');
+                const m = dmyMatch[2].padStart(2, '0');
+                const y = dmyMatch[3];
+                return `${y}-${m}-${d}`;
+            }
+        }
         const d = new Date(raw);
         if (isNaN(d.getTime())) return null;
         // Return as local date string YYYY-MM-DD
@@ -392,56 +426,254 @@ const DC = () => {
         return `${y}-${m}-${day}`;
     };
 
-    // Filter DC items by date range, comparing YYYY-MM-DD strings (timezone-safe)
-    const filterDCByDateRange = (items, fromDate, toDate) => {
+    // Helper: get PO number from item or by matching rr_no/po_id from poList
+    const getPONumber = (item) => {
+        if (!item) return '-';
+        if (item.po_no) return item.po_no;
+        if (item.po?.po_no) return item.po.po_no;
+        if (item.po_number) return item.po_number;
+        if (item.poId || item.po_id) {
+            const found = poList.find(p => p.id === (item.poId || item.po_id));
+            if (found?.po_no) return found.po_no;
+        }
+        if (item.rr_no && poList.length > 0) {
+            const found = poList.find(p => p.rr_no && String(p.rr_no).trim().toLowerCase() === String(item.rr_no).trim().toLowerCase());
+            if (found?.po_no) return found.po_no;
+        }
+        return '-';
+    };
+
+    // Helper: extract all material names from item or by matching rr_no/po_id from poList
+    const getMaterialNames = (item) => {
+        if (!item) return [];
+        let mats = [];
+        if (Array.isArray(item.materials)) {
+            mats = item.materials;
+        } else if (typeof item.materials === 'string') {
+            try {
+                const parsed = JSON.parse(item.materials);
+                if (Array.isArray(parsed)) mats = parsed;
+                else if (parsed) mats = [parsed];
+            } catch {
+                if (item.materials.trim()) mats = [{ name: item.materials.trim() }];
+            }
+        } else if (item.material) {
+            if (Array.isArray(item.material)) mats = item.material;
+            else if (typeof item.material === 'object') mats = [item.material];
+            else if (typeof item.material === 'string') mats = [{ name: item.material }];
+        }
+
+        // If no materials on item, fallback to matching PO in poList
+        if ((!mats || mats.length === 0) && poList && poList.length > 0) {
+            let po = null;
+            if (item.poId || item.po_id) {
+                po = poList.find(p => p.id === (item.poId || item.po_id));
+            }
+            if (!po && item.rr_no) {
+                po = poList.find(p => p.rr_no && String(p.rr_no).trim().toLowerCase() === String(item.rr_no).trim().toLowerCase());
+            }
+            if (po?.materials) {
+                if (Array.isArray(po.materials)) mats = po.materials;
+                else if (typeof po.materials === 'string') {
+                    try {
+                        const parsed = JSON.parse(po.materials);
+                        if (Array.isArray(parsed)) mats = parsed;
+                    } catch {
+                        if (po.materials.trim()) mats = [{ name: po.materials.trim() }];
+                    }
+                }
+            }
+        }
+
+        const names = [];
+        if (Array.isArray(mats)) {
+            mats.forEach(m => {
+                if (typeof m === 'string') {
+                    const trimmed = m.trim();
+                    if (trimmed) names.push(trimmed);
+                } else if (m && typeof m === 'object') {
+                    const n = m.name || m.material_name || m.mat_name || m.materialName || m.label || '';
+                    if (n && typeof n === 'string') {
+                        const trimmed = n.trim();
+                        if (trimmed) names.push(trimmed);
+                    }
+                }
+            });
+        }
+        return names;
+    };
+
+    // Filter DC items for bulk download by all bulk modal filters (requires at least one active filter)
+    // SELECT_ALL_VALUE ('__ALL__') on a field = include all values for that field
+    const filterDCForBulk = (items, fromDate, toDate, selectedPo, bTruck, bRR, bMaterial, bStatus) => {
+        const hasAnyFilter = Boolean(selectedPo || fromDate || toDate || bTruck || bRR || bMaterial || bStatus);
+        if (!hasAnyFilter) {
+            return [];
+        }
+
         return items.filter((item) => {
-            // If no date field at all, include it (don't silently drop)
-            const dateStr = getDCDateStr(item);
-            if (!dateStr) return item.status !== 3;
-            return dateStr >= fromDate && dateStr <= toDate && item.status !== 3;
+            // Status filter — skip when SELECT_ALL_VALUE
+            if (bStatus && bStatus !== SELECT_ALL_VALUE) {
+                if (String(item.status) !== bStatus) return false;
+            } else if (!bStatus) {
+                // No status filter set at all — default: skip Pending (status=3)
+                if (item.status === 3) return false;
+            }
+            // If bStatus === SELECT_ALL_VALUE: include all statuses (even Pending)
+
+            // Filter by PO Number
+            if (selectedPo && selectedPo !== SELECT_ALL_VALUE) {
+                const itemPo = getPONumber(item);
+                if (!itemPo || String(itemPo).trim().toLowerCase() !== String(selectedPo).trim().toLowerCase()) return false;
+            }
+
+            // Filter by RR No
+            if (bRR && bRR !== SELECT_ALL_VALUE) {
+                if (String(item.rr_no || '').trim().toLowerCase() !== String(bRR).trim().toLowerCase()) return false;
+            }
+
+            // Filter by Truck No
+            if (bTruck && bTruck !== SELECT_ALL_VALUE) {
+                if (String(item.truck_no || '').trim().toLowerCase() !== String(bTruck).trim().toLowerCase()) return false;
+            }
+
+            // Filter by Material
+            if (bMaterial && bMaterial !== SELECT_ALL_VALUE) {
+                const targetMat = String(bMaterial).trim().toLowerCase();
+                const itemMats = getMaterialNames(item).map(n => String(n).trim().toLowerCase());
+                const hasMaterial = itemMats.some(m => m === targetMat || m.includes(targetMat) || targetMat.includes(m));
+                if (!hasMaterial) return false;
+            }
+
+            // Filter by Date Range
+            if (fromDate && toDate) {
+                const dateStr = getDCDateStr(item);
+                if (dateStr && (dateStr < fromDate || dateStr > toDate)) return false;
+            } else if (fromDate) {
+                const dateStr = getDCDateStr(item);
+                if (dateStr && dateStr < fromDate) return false;
+            } else if (toDate) {
+                const dateStr = getDCDateStr(item);
+                if (dateStr && dateStr > toDate) return false;
+            }
+
+            return true;
         });
     };
 
-    // Bulk download filtered DCs
+    // Helper: fetch PDF from backend as ArrayBuffer for merging (bypassing browser cache)
+    const fetchPdfArrayBuffer = async (pdfLink, itemIndex = 0) => {
+        let pdfPath;
+        try {
+            pdfPath = new URL(pdfLink).pathname;
+        } catch {
+            pdfPath = pdfLink;
+        }
+        const serverBase = import.meta.env.VITE_SERVER_URL?.replace(/\/api\/?$/, '');
+        // Append unique timestamp and index to bypass any browser or proxy cache
+        const cacheBuster = `_cb=${Date.now()}_${itemIndex}_${Math.floor(Math.random() * 100000)}`;
+        const fullUrl = `${serverBase}${pdfPath}?${cacheBuster}`;
+
+        const response = await fetch(fullUrl, {
+            cache: 'no-store',
+            headers: {
+                'Cache-Control': 'no-cache, no-store, must-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+                Authorization: axios.defaults.headers?.common?.Authorization || ''
+            }
+        });
+        if (!response.ok) throw new Error(`PDF fetch failed with status ${response.status}`);
+        return await response.arrayBuffer();
+    };
+
+    // Bulk download filtered DCs merged into a single PDF
     const handleBulkDownload = async () => {
-        if (!bulkFromDate || !bulkToDate) {
-            Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Please select both From and To dates', showConfirmButton: false, timer: 2000 });
+        const hasAnyFilter = bulkSelectedPo || bulkFromDate || bulkToDate || bulkFilterTruck || bulkFilterRR || bulkFilterMaterial || bulkFilterStatus;
+        if (!hasAnyFilter) {
+            Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Please select at least one filter', showConfirmButton: false, timer: 2000 });
             return;
         }
-        if (bulkFromDate > bulkToDate) {
+        if (bulkFromDate && bulkToDate && bulkFromDate > bulkToDate) {
             Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'From date cannot be after To date', showConfirmButton: false, timer: 2000 });
             return;
         }
-        const filtered = filterDCByDateRange(data, bulkFromDate, bulkToDate);
+        const filtered = filterDCForBulk(data, bulkFromDate, bulkToDate, bulkSelectedPo, bulkFilterTruck, bulkFilterRR, bulkFilterMaterial, bulkFilterStatus);
         if (filtered.length === 0) {
-            Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No active DCs found in this date range', showConfirmButton: false, timer: 2500 });
+            Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No DCs found for selected filter', showConfirmButton: false, timer: 2500 });
             return;
         }
         setIsBulkDownloading(true);
         setBulkProgress({ current: 0, total: filtered.length });
         let successCount = 0;
-        for (let i = 0; i < filtered.length; i++) {
-            const item = filtered[i];
-            setBulkProgress({ current: i + 1, total: filtered.length });
-            try {
-                const { data: res } = await axios.post(`/dc/getChallanByView`, { dcData: item });
-                if (res.pdfLink) {
-                    await downloadPdfBlob(res.pdfLink, `DC_${item.token_no}.pdf`);
-                    successCount++;
-                    await new Promise(r => setTimeout(r, 600));
+
+        try {
+            const mergedPdf = await PDFDocument.create();
+
+            for (let i = 0; i < filtered.length; i++) {
+                const item = filtered[i];
+                setBulkProgress({ current: i + 1, total: filtered.length });
+                try {
+                    // Request backend to generate PDF for this specific DC item
+                    const { data: res } = await axios.post(`/dc/getChallanByView`, { dcData: item });
+                    if (res.pdfLink) {
+                        // Small delay to ensure backend write completes before reading
+                        await new Promise(r => setTimeout(r, 250));
+                        const pdfBytes = await fetchPdfArrayBuffer(res.pdfLink, i);
+                        const donorPdf = await PDFDocument.load(pdfBytes);
+                        const copiedPages = await mergedPdf.copyPages(donorPdf, donorPdf.getPageIndices());
+                        copiedPages.forEach((page) => mergedPdf.addPage(page));
+                        successCount++;
+                    }
+                } catch (err) {
+                    console.error(`Failed to fetch/merge DC for ${item.token_no}`, err);
                 }
-            } catch (err) {
-                console.error(`Failed to download DC for ${item.token_no}`, err);
             }
+
+            if (successCount === 0) {
+                Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Failed to generate PDF for selected DCs', showConfirmButton: false, timer: 2500 });
+                return;
+            }
+
+            const mergedPdfBytes = await mergedPdf.save();
+            const blob = new Blob([mergedPdfBytes], { type: 'application/pdf' });
+            const blobUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            let filename = 'Bulk_DC';
+            if (bulkSelectedPo) filename += `_PO_${bulkSelectedPo.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+            if (bulkFromDate && bulkToDate) filename += `_${bulkFromDate}_to_${bulkToDate}`;
+            filename += '.pdf';
+
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(blobUrl);
+
+            setIsBulkDownloadOpen(false);
+            setBulkFromDate('');
+            setBulkToDate('');
+            setBulkSelectedPo('');
+            setBulkFilterTruck('');
+            setBulkFilterRR('');
+            setBulkFilterMaterial('');
+            setBulkFilterStatus('');
+            Swal.fire({
+                toast: true,
+                position: 'top-end',
+                icon: 'success',
+                title: `Downloaded 1 PDF containing ${successCount} DC(s)`,
+                showConfirmButton: false,
+                timer: 3000
+            });
+        } catch (err) {
+            console.error('Error creating merged bulk PDF:', err);
+            Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Failed to create merged PDF', showConfirmButton: false, timer: 2500 });
+        } finally {
+            setIsBulkDownloading(false);
+            setBulkProgress({ current: 0, total: 0 });
         }
-        setIsBulkDownloading(false);
-        setBulkProgress({ current: 0, total: 0 });
-        setIsBulkDownloadOpen(false);
-        Swal.fire({
-            toast: true, position: 'top-end', icon: 'success',
-            title: `Downloaded ${successCount} of ${filtered.length} DCs`,
-            showConfirmButton: false, timer: 3000
-        });
     };
 
 
@@ -535,15 +767,77 @@ const DC = () => {
 
 
 
+    // PO Number options for bulk download dropdown filter
+    const poOptions = useMemo(() => {
+        const poSet = new Set();
+        poList.forEach(p => {
+            if (p.po_no) poSet.add(String(p.po_no).trim());
+        });
+        data.forEach(item => {
+            const poNo = getPONumber(item);
+            if (poNo && poNo !== '-') poSet.add(String(poNo).trim());
+        });
+        const sorted = Array.from(poSet).sort();
+        return [
+            { label: 'All PO Numbers (Optional)', value: '' },
+            ...sorted.map(po => ({ label: po, value: po }))
+        ];
+    }, [poList, data]);
+
     const filteredData = data.filter((item) => {
-        return (
-            item.rr_no.toString().toLowerCase().includes(searchQuery.toLowerCase()) ||
-            item.ship_to__id.toString().toLowerCase().includes(searchQuery.toLowerCase()) ||
-            item.token_no.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            String(item.truck_no).toLowerCase().includes(searchQuery.toLowerCase()) ||
-            item.materials[0].name.toString().toLowerCase().includes(searchQuery.toLowerCase())
+        const poNum = getPONumber(item);
+        const itemMats = getMaterialNames(item);
+        // Text search filter
+        const matchesSearch = !searchQuery || (
+            (poNum && poNum !== '-' && poNum.toString().toLowerCase().includes(searchQuery.toLowerCase())) ||
+            (item.po_no && item.po_no.toString().toLowerCase().includes(searchQuery.toLowerCase())) ||
+            item.rr_no?.toString().toLowerCase().includes(searchQuery.toLowerCase()) ||
+            item.ship_to__id?.toString().toLowerCase().includes(searchQuery.toLowerCase()) ||
+            item.token_no?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            String(item.truck_no || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+            itemMats.some(m => m.toLowerCase().includes(searchQuery.toLowerCase()))
         );
+        // Dropdown filters
+        const matchesTruck = !filterTruck || String(item.truck_no || '').trim().toLowerCase() === String(filterTruck).trim().toLowerCase();
+        const matchesRR = !filterRR || String(item.rr_no || '').trim().toLowerCase() === String(filterRR).trim().toLowerCase();
+        const matchesMaterial = !filterMaterial || (() => {
+            const targetMat = String(filterMaterial).trim().toLowerCase();
+            return itemMats.some(m => m.toLowerCase() === targetMat || m.toLowerCase().includes(targetMat) || targetMat.includes(m.toLowerCase()));
+        })();
+        const matchesStatus = !filterStatus || String(item.status) === filterStatus;
+        return matchesSearch && matchesTruck && matchesRR && matchesMaterial && matchesStatus;
     });
+
+
+    // Unique option lists for table filter dropdowns
+    const truckOptions = useMemo(() => {
+        const vals = [...new Set(data.map(d => String(d.truck_no || '').trim()).filter(Boolean))].sort();
+        return [{ label: 'All Trucks', value: '' }, ...vals.map(v => ({ label: v, value: v }))];
+    }, [data]);
+
+    const rrOptions2 = useMemo(() => {
+        const vals = [...new Set(data.map(d => String(d.rr_no || '').trim()).filter(Boolean))].sort();
+        return [{ label: 'All RR Numbers', value: '' }, ...vals.map(v => ({ label: v, value: v }))];
+    }, [data]);
+
+    const materialOptions = useMemo(() => {
+        const matSet = new Set();
+        data.forEach(d => {
+            getMaterialNames(d).forEach(n => matSet.add(n));
+        });
+        poList.forEach(p => {
+            getMaterialNames(p).forEach(n => matSet.add(n));
+        });
+        const vals = [...matSet].sort();
+        return [{ label: 'All Materials (Optional)', value: '' }, ...vals.map(v => ({ label: v, value: v }))];
+    }, [data, poList]);
+
+    const statusOptions = [
+        { label: 'All Status (Optional)', value: '' },
+        { label: 'Active', value: '1' },
+        { label: 'Cancelled', value: '2' },
+        { label: 'Pending', value: '3' },
+    ];
 
     // Pagination states
     const [currentPage, setCurrentPage] = useState(1);
@@ -572,80 +866,243 @@ const DC = () => {
 
             {/* Bulk Download Modal */}
             {isBulkDownloadOpen && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
-                    <div className="bg-white rounded-xl shadow-2xl w-[480px] font-poppins overflow-hidden">
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50 p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl font-poppins overflow-hidden flex flex-col max-h-[94vh] border border-gray-100">
+
                         {/* Header */}
-                        <div className="flex justify-between items-center px-6 py-4 border-b bg-gradient-to-r from-orange-500 to-orange-400">
-                            <div className="flex items-center gap-2 text-white">
-                                <MdDownloadForOffline size={22} />
-                                <h2 className="text-lg font-semibold">Bulk Download DCs</h2>
+                        <div className="flex justify-between items-center px-7 py-5 bg-gradient-to-r from-orange-500 via-orange-500 to-amber-500 shrink-0">
+                            <div className="flex items-center gap-3.5 text-white">
+                                <div className="p-2.5 bg-white/20 rounded-xl">
+                                    <MdDownloadForOffline size={24} className="text-white" />
+                                </div>
+                                <div>
+                                    <h2 className="text-lg font-bold tracking-tight">Bulk Download — Delivery Challans</h2>
+                                    <p className="text-xs text-orange-100 mt-0.5">Apply filters below and merge matching Delivery Challans into 1 single PDF file</p>
+                                </div>
                             </div>
                             <button
-                                onClick={() => { setIsBulkDownloadOpen(false); setBulkFromDate(''); setBulkToDate(''); }}
-                                className="text-white hover:bg-white hover:bg-opacity-20 rounded-full p-1 transition"
+                                onClick={() => {
+                                    setIsBulkDownloadOpen(false);
+                                    setBulkFromDate('');
+                                    setBulkToDate('');
+                                    setBulkSelectedPo('');
+                                    setBulkFilterTruck('');
+                                    setBulkFilterRR('');
+                                    setBulkFilterMaterial('');
+                                    setBulkFilterStatus('');
+                                }}
+                                className="text-white/80 hover:text-white hover:bg-white/20 rounded-full p-1.5 transition"
+                                title="Close"
                             >
-                                <IoCloseSharp size={20} />
+                                <IoCloseSharp size={22} />
                             </button>
                         </div>
 
                         {/* Body */}
-                        <div className="px-6 py-5 space-y-5">
-                            {/* Quick select */}
-                            <div>
-                                <p className="text-sm text-gray-500 mb-2 font-medium">Quick Select</p>
-                                <button
-                                    onClick={applyLastOneMonth}
-                                    className="flex items-center gap-2 px-4 py-2 bg-orange-50 border border-orange-300 text-orange-600 text-sm rounded-lg hover:bg-orange-100 transition font-medium"
-                                >
-                                    <BsCalendarDateFill size={14} />
-                                    Last 1 Month
-                                </button>
+                        <div className="px-7 py-5 space-y-5 overflow-y-auto flex-1">
+
+                            {/* Quick Presets & Clear */}
+                            <div className="flex items-center justify-between bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
+                                <div>
+                                    <span className="text-xs font-semibold text-orange-900 uppercase tracking-wider block">Quick Presets</span>
+                                    <span className="text-xs text-orange-700/70">Use presets or set custom filters below</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={applyLastOneMonth}
+                                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold rounded-lg transition shadow-sm"
+                                    >
+                                        <BsCalendarDateFill size={12} />
+                                        Last 1 Month
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setBulkFromDate('');
+                                            setBulkToDate('');
+                                            setBulkSelectedPo('');
+                                            setBulkFilterTruck('');
+                                            setBulkFilterRR('');
+                                            setBulkFilterMaterial('');
+                                            setBulkFilterStatus('');
+                                        }}
+                                        className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-gray-300 text-gray-600 hover:text-red-600 hover:border-red-300 hover:bg-red-50 text-xs font-semibold rounded-lg transition shadow-sm"
+                                    >
+                                        <RiRefreshLine size={13} />
+                                        Clear All
+                                    </button>
+                                </div>
                             </div>
 
-                            <div className="border-t border-dashed"></div>
+                            {/* Divider label */}
+                            <div className="flex items-center gap-3">
+                                <div className="flex-1 h-px bg-gray-200" />
+                                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Filter by</span>
+                                <div className="flex-1 h-px bg-gray-200" />
+                            </div>
 
-                            {/* Date range */}
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">From Date</label>
-                                    <input
-                                        type="date"
-                                        value={bulkFromDate}
-                                        onChange={(e) => setBulkFromDate(e.target.value)}
-                                        className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                            {/* Filter Dropdowns Grid */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                                {/* PO Number */}
+                                <div className="space-y-1.5">
+                                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">PO Number</label>
+                                    <SearchableSelect
+                                        options={poOptions}
+                                        value={bulkSelectedPo}
+                                        onChange={setBulkSelectedPo}
+                                        placeholder="Select PO..."
+                                        searchPlaceholder="Search PO..."
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-1">To Date</label>
-                                    <input
-                                        type="date"
-                                        value={bulkToDate}
-                                        onChange={(e) => setBulkToDate(e.target.value)}
-                                        className="w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+
+                                {/* Truck Number */}
+                                <div className="space-y-1.5">
+                                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Truck Number</label>
+                                    <SearchableSelect
+                                        options={truckOptions}
+                                        value={bulkFilterTruck}
+                                        onChange={setBulkFilterTruck}
+                                        placeholder="Select Truck No..."
+                                        searchPlaceholder="Search truck..."
+                                    />
+                                </div>
+
+                                {/* RR No */}
+                                <div className="space-y-1.5">
+                                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">RR Number</label>
+                                    <SearchableSelect
+                                        options={rrOptions2}
+                                        value={bulkFilterRR}
+                                        onChange={setBulkFilterRR}
+                                        placeholder="Select RR No..."
+                                        searchPlaceholder="Search RR..."
+                                    />
+                                </div>
+
+                                {/* Material */}
+                                <div className="space-y-1.5">
+                                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Material</label>
+                                    <SearchableSelect
+                                        options={materialOptions}
+                                        value={bulkFilterMaterial}
+                                        onChange={setBulkFilterMaterial}
+                                        placeholder="Select Material..."
+                                        searchPlaceholder="Search material..."
+                                    />
+                                </div>
+
+                                {/* Status */}
+                                <div className="space-y-1.5">
+                                    <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">DC Status</label>
+                                    <SearchableSelect
+                                        options={statusOptions}
+                                        value={bulkFilterStatus}
+                                        onChange={setBulkFilterStatus}
+                                        placeholder="Select Status..."
+                                        searchPlaceholder="Search status..."
                                     />
                                 </div>
                             </div>
 
-                            {/* Preview count */}
-                            {bulkFromDate && bulkToDate && (
-                                <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-3 text-sm text-orange-700">
-                                    {(() => {
-                                        const count = filterDCByDateRange(data, bulkFromDate, bulkToDate).length;
-                                        return <span><strong>{count}</strong> active DC(s) found in the selected range.</span>;
-                                    })()}
+                            {/* Dedicated Date Range Section */}
+                            <div className="bg-gradient-to-r from-orange-50/70 via-amber-50/40 to-orange-50/70 border border-orange-200/80 rounded-xl p-4 space-y-2.5">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-6 h-6 rounded-md bg-orange-500 text-white flex items-center justify-center shadow-sm">
+                                            <BsCalendarDateFill size={11} />
+                                        </div>
+                                        <span className="text-xs font-bold text-orange-950 uppercase tracking-wider">Date Range Filter</span>
+                                        <span className="text-[11px] text-orange-700/80 font-medium">(Optional)</span>
+                                    </div>
+                                    {(bulkFromDate || bulkToDate) && (
+                                        <button
+                                            type="button"
+                                            onClick={() => { setBulkFromDate(''); setBulkToDate(''); }}
+                                            className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-700 font-semibold hover:underline"
+                                        >
+                                            <RiRefreshLine size={12} />
+                                            Clear Dates
+                                        </button>
+                                    )}
                                 </div>
-                            )}
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                                    <div className="space-y-1.5">
+                                        <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                                            From Date
+                                        </label>
+                                        <input
+                                            type="date"
+                                            value={bulkFromDate}
+                                            onChange={(e) => setBulkFromDate(e.target.value)}
+                                            className="w-full h-10 px-3.5 border border-gray-300 rounded-lg text-sm bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-sm transition"
+                                        />
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                                            To Date
+                                        </label>
+                                        <input
+                                            type="date"
+                                            value={bulkToDate}
+                                            onChange={(e) => setBulkToDate(e.target.value)}
+                                            className="w-full h-10 px-3.5 border border-gray-300 rounded-lg text-sm bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-sm transition"
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Live Preview Count Card */}
+                            {(() => {
+                                const hasAnyFilter = Boolean(bulkSelectedPo || bulkFromDate || bulkToDate || bulkFilterTruck || bulkFilterRR || bulkFilterMaterial || bulkFilterStatus);
+                                const matchingCount = filterDCForBulk(
+                                    data,
+                                    bulkFromDate,
+                                    bulkToDate,
+                                    bulkSelectedPo,
+                                    bulkFilterTruck,
+                                    bulkFilterRR,
+                                    bulkFilterMaterial,
+                                    bulkFilterStatus
+                                ).length;
+
+                                return (
+                                    <div className={`rounded-xl p-4 flex items-center gap-4 border transition-all duration-200 ${hasAnyFilter && matchingCount > 0 ? 'bg-gradient-to-r from-orange-50 to-amber-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
+                                        <div className={`w-14 h-14 rounded-2xl font-bold text-xl flex items-center justify-center shadow shrink-0 ${hasAnyFilter && matchingCount > 0 ? 'bg-orange-500 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                                            {matchingCount}
+                                        </div>
+                                        <div className="flex-1">
+                                            <span className={`text-sm font-bold block ${hasAnyFilter && matchingCount > 0 ? 'text-orange-900' : 'text-gray-600'}`}>
+                                                {hasAnyFilter
+                                                    ? `${matchingCount} ${matchingCount === 1 ? 'Delivery Challan' : 'Delivery Challans'} matched`
+                                                    : 'No filter selected'}
+                                            </span>
+                                            <span className="text-xs text-gray-500 mt-0.5 block">
+                                                {hasAnyFilter
+                                                    ? (matchingCount > 0 ? 'All matched records will be merged into 1 single PDF file' : 'No records match this filter combination — try adjusting your selection')
+                                                    : 'Choose at least one filter above to preview matching records'}
+                                            </span>
+                                        </div>
+                                        {hasAnyFilter && matchingCount > 0 && (
+                                            <div className="shrink-0 text-orange-500">
+                                                <MdFileDownload size={28} />
+                                            </div>
+                                        )}
+                                    </div>
+                                );
+                            })()}
 
                             {/* Progress */}
                             {isBulkDownloading && (
-                                <div className="space-y-2">
-                                    <div className="flex justify-between text-xs text-gray-500">
-                                        <span>Downloading...</span>
+                                <div className="space-y-2 bg-orange-50/80 border border-orange-200 rounded-xl p-3.5">
+                                    <div className="flex justify-between text-xs text-orange-900 font-medium">
+                                        <span>Merging vouchers into single PDF...</span>
                                         <span>{bulkProgress.current} / {bulkProgress.total}</span>
                                     </div>
-                                    <div className="w-full bg-gray-200 rounded-full h-2.5">
+                                    <div className="w-full bg-orange-200/60 rounded-full h-2 overflow-hidden">
                                         <div
-                                            className="bg-orange-500 h-2.5 rounded-full transition-all duration-300"
+                                            className="bg-orange-500 h-2 rounded-full transition-all duration-300"
                                             style={{ width: `${bulkProgress.total > 0 ? (bulkProgress.current / bulkProgress.total) * 100 : 0}%` }}
                                         ></div>
                                     </div>
@@ -653,24 +1110,44 @@ const DC = () => {
                             )}
                         </div>
 
-                        {/* Footer */}
-                        <div className="flex gap-3 px-6 pb-5">
+                        {/* Footer Actions */}
+                        <div className="flex items-center gap-3 px-7 py-4 bg-gray-50 border-t border-gray-100 shrink-0">
                             <button
-                                onClick={() => { setIsBulkDownloadOpen(false); setBulkFromDate(''); setBulkToDate(''); }}
+                                type="button"
+                                onClick={() => {
+                                    setIsBulkDownloadOpen(false);
+                                    setBulkFromDate('');
+                                    setBulkToDate('');
+                                    setBulkSelectedPo('');
+                                    setBulkFilterTruck('');
+                                    setBulkFilterRR('');
+                                    setBulkFilterMaterial('');
+                                    setBulkFilterStatus('');
+                                }}
                                 disabled={isBulkDownloading}
-                                className="flex-1 px-4 py-2.5 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition text-sm font-medium"
+                                className="h-11 px-6 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-100 active:bg-gray-200 transition text-sm font-semibold shadow-sm"
                             >
                                 Cancel
                             </button>
                             <button
+                                type="button"
                                 onClick={handleBulkDownload}
-                                disabled={isBulkDownloading}
-                                className="flex-1 px-4 py-2.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition text-sm font-medium flex items-center justify-center gap-2"
+                                disabled={isBulkDownloading || !(bulkSelectedPo || bulkFromDate || bulkToDate || bulkFilterTruck || bulkFilterRR || bulkFilterMaterial || bulkFilterStatus)}
+                                className="flex-1 h-11 px-6 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white rounded-xl transition text-sm font-semibold flex items-center justify-center gap-2 shadow-md shadow-orange-500/30 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-orange-500"
                             >
                                 {isBulkDownloading ? (
-                                    <><svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg> Downloading...</>
+                                    <>
+                                        <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                                        </svg>
+                                        <span>Generating PDF...</span>
+                                    </>
                                 ) : (
-                                    <><MdFileDownload size={18} /> Download All</>
+                                    <>
+                                        <MdFileDownload size={20} />
+                                        <span>Download Selected (PDF)</span>
+                                    </>
                                 )}
                             </button>
                         </div>
@@ -798,7 +1275,16 @@ const DC = () => {
                         <div className='space-x-3 flex items-center'>
 
                             <button
-                                onClick={() => setIsBulkDownloadOpen(true)}
+                                onClick={() => {
+                                    setBulkFromDate('');
+                                    setBulkToDate('');
+                                    setBulkSelectedPo('');
+                                    setBulkFilterTruck('');
+                                    setBulkFilterRR('');
+                                    setBulkFilterMaterial('');
+                                    setBulkFilterStatus('');
+                                    setIsBulkDownloadOpen(true);
+                                }}
                                 className="px-4 py-2 bg-[#E8F0FE] text-[#1a73e8] border border-blue-200 rounded-lg hover:bg-blue-500 hover:text-white transition"
                             >
                                 <div className="flex gap-2 items-center text-xs">
@@ -819,11 +1305,15 @@ const DC = () => {
 
                 </div>
 
+
+
+
                 <div className={`overflow px-6 mx-4 mt-5 bg-white`}>
                     <table className="w-full border-collapse">
                         <thead className="font-poppins font-semibold bg-white sticky top-0 z-10">
                             <tr className="border-b">
                                 <th className="p-4 text-center text-sm text-black bg-white">S.No</th>
+                                <th className="p-4 text-center text-sm text-black bg-white">PO No</th>
                                 <th className="p-4 text-center text-sm text-black bg-white">RR No</th>
                                 <th className="p-4 text-center text-sm text-black bg-white">Token No</th>
                                 <th className="p-4 text-center text-sm text-black bg-white">Ship To</th>
@@ -841,12 +1331,13 @@ const DC = () => {
                             {paginatedData.map((item, index) => (
                                 <tr key={index} className="hover:bg-gray-50 text-center">
                                     <td className="p-4 text-sm opacity-65">{startIndex + index + 1}</td>
+                                    <td className="p-4 text-sm opacity-65">{getPONumber(item)}</td>
                                     <td className="p-4 text-sm opacity-65">{item.rr_no}</td>
                                     <td className="p-4 text-sm opacity-65">{item.token_no}</td>
                                     <td className="p-4 text-sm opacity-65">{item.sap_name}</td>
                                     <td className="p-4 text-sm opacity-65">{item.truck_no}</td>
                                     <td className="p-4 text-sm opacity-65">
-                                        {item.materials?.map((m) => m.name).join(', ')}
+                                        {getMaterialNames(item).join(', ') || '-'}
                                     </td>
 
                                     <td className="p-4 text-sm opacity-65">
@@ -981,7 +1472,7 @@ const DC = () => {
                             {
                                 (paginatedData?.length <= 0 && !isLoading) &&
                                 <tr>
-                                    <td colSpan="8" className="py-10 text-center text-gray-500 text-sm">
+                                    <td colSpan="10" className="py-10 text-center text-gray-500 text-sm">
                                         No Data Available
                                     </td>
                                 </tr>
@@ -989,7 +1480,7 @@ const DC = () => {
 
                             {isLoading && (
                                 <tr>
-                                    <td colSpan="8" className="py-10 text-center">
+                                    <td colSpan="10" className="py-10 text-center">
                                         <div className="flex justify-center items-center">
                                             <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
                                         </div>

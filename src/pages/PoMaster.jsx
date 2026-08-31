@@ -1,14 +1,19 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useMemo, useRef } from 'react'
 import { Link, Links } from 'react-router-dom'
-import { RiArrowUpSFill, RiDeleteBin6Line, RiSearchLine } from 'react-icons/ri'
+import { RiArrowUpSFill, RiDeleteBin6Line, RiSearchLine, RiRefreshLine } from 'react-icons/ri'
 import { IoCloseSharp } from "react-icons/io5";
 import { LuImport } from 'react-icons/lu'
+import { MdFileDownload, MdDownloadForOffline } from 'react-icons/md';
+import { BsCalendarDateFill } from 'react-icons/bs';
 import axios from 'axios';
 import Swal from "sweetalert2";
 import ExcelExport from '../utils/ExcelExport'
 import { FiEdit2 } from 'react-icons/fi';
 import { CustomDropdown } from '../components/CustomDropdown';
 import { useAuth } from '../auth/AuthContext';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import SearchableSelect, { SELECT_ALL_VALUE } from '../components/SearchableSelect';
 
 
 const POMaster = () => {
@@ -20,6 +25,17 @@ const POMaster = () => {
   const [modalIsOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSubmitLoading, setIsSubmitLoading] = useState(false)
+
+  // Bulk download modal state
+  const [isBulkDownloadOpen, setIsBulkDownloadOpen] = useState(false);
+  const [bulkFromDate, setBulkFromDate] = useState('');
+  const [bulkToDate, setBulkToDate] = useState('');
+  const [bulkSelectedPo, setBulkSelectedPo] = useState('');
+  const [bulkSelectedSupplier, setBulkSelectedSupplier] = useState('');
+  const [bulkSelectedRR, setBulkSelectedRR] = useState('');
+  const [bulkSelectedMaterial, setBulkSelectedMaterial] = useState('');
+  const [bulkSelectedStatus, setBulkSelectedStatus] = useState('');
+  const [isBulkDownloading, setIsBulkDownloading] = useState(false);
 
   const [materialOption, setMaterialOption] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
@@ -337,6 +353,585 @@ const POMaster = () => {
 
 
 
+  // Apply last 1 month date range
+  const applyLastOneMonth = () => {
+    const today = new Date();
+    const oneMonthAgo = new Date();
+    oneMonthAgo.setMonth(today.getMonth() - 1);
+    const fmt = (d) => d.toISOString().split('T')[0];
+    setBulkFromDate(fmt(oneMonthAgo));
+    setBulkToDate(fmt(today));
+  };
+
+  // Helper: get PO date from any available date field, as a local YYYY-MM-DD string
+  const getPoDateStr = (item) => {
+    const raw = item?.supplier_invoice_date || item?.po_date || item?.rr_date || item?.createdAt || item?.created_at || item?.updatedAt || null;
+    if (!raw) return null;
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      const ymdMatch = trimmed.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+      if (ymdMatch) {
+        const y = ymdMatch[1];
+        const m = ymdMatch[2].padStart(2, '0');
+        const d = ymdMatch[3].padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+      const dmyMatch = trimmed.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+      if (dmyMatch) {
+        const d = dmyMatch[1].padStart(2, '0');
+        const m = dmyMatch[2].padStart(2, '0');
+        const y = dmyMatch[3];
+        return `${y}-${m}-${d}`;
+      }
+    }
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return null;
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  // Helper: extract all material names from PO item
+  const getPoMaterialNames = (item) => {
+    if (!item) return [];
+    let mats = [];
+    if (Array.isArray(item.materials)) {
+      mats = item.materials;
+    } else if (typeof item.materials === 'string') {
+      try {
+        const parsed = JSON.parse(item.materials);
+        if (Array.isArray(parsed)) mats = parsed;
+        else if (parsed) mats = [parsed];
+      } catch {
+        if (item.materials.trim()) mats = [{ name: item.materials.trim() }];
+      }
+    }
+    const names = [];
+    mats.forEach(m => {
+      if (typeof m === 'string' && m.trim()) names.push(m.trim());
+      else if (m && typeof m === 'object' && m.name) names.push(String(m.name).trim());
+    });
+    if (names.length === 0 && item.material_view) {
+      const parts = item.material_view.split(',').map(s => s.split('[')[0].trim()).filter(Boolean);
+      names.push(...parts);
+    }
+    return names;
+  };
+
+  const getStatusText = (status) => {
+    switch (Number(status)) {
+      case 1: return 'Pending';
+      case 2: return 'In-Transit';
+      case 3: return 'Active';
+      case 4: return 'Closed';
+      default: return 'Unknown';
+    }
+  };
+
+  // Filter PO items for bulk download (requires at least one active filter)
+  // SELECT_ALL_VALUE ('__ALL__') on a field = include all values for that field
+  const filterPOForBulk = (items, fromDate, toDate, poNo, supplier, rrNo, material, status) => {
+    const hasAnyFilter = Boolean(poNo || supplier || rrNo || material || status || fromDate || toDate);
+    if (!hasAnyFilter) {
+      return [];
+    }
+
+    return items.filter((item) => {
+      // Status filter — skip when SELECT_ALL_VALUE or empty
+      if (status && status !== SELECT_ALL_VALUE) {
+        if (String(item.status) !== String(status)) return false;
+      }
+
+      // PO No filter
+      if (poNo && poNo !== SELECT_ALL_VALUE) {
+        if (String(item.po_no || '').trim().toLowerCase() !== String(poNo).trim().toLowerCase()) return false;
+      }
+
+      // Supplier filter
+      if (supplier && supplier !== SELECT_ALL_VALUE) {
+        if (String(item.supplier_name || '').trim().toLowerCase() !== String(supplier).trim().toLowerCase()) return false;
+      }
+
+      // RR No filter
+      if (rrNo && rrNo !== SELECT_ALL_VALUE) {
+        if (String(item.rr_no || '').trim().toLowerCase() !== String(rrNo).trim().toLowerCase()) return false;
+      }
+
+      // Material filter
+      if (material && material !== SELECT_ALL_VALUE) {
+        const targetMat = String(material).trim().toLowerCase();
+        const mats = getPoMaterialNames(item).map(m => m.toLowerCase());
+        const hasMat = mats.some(m => m === targetMat || m.includes(targetMat) || targetMat.includes(m));
+        if (!hasMat) return false;
+      }
+
+      // Date range filter
+      if (fromDate && toDate) {
+        const dateStr = getPoDateStr(item);
+        if (dateStr && (dateStr < fromDate || dateStr > toDate)) return false;
+      } else if (fromDate) {
+        const dateStr = getPoDateStr(item);
+        if (dateStr && dateStr < fromDate) return false;
+      } else if (toDate) {
+        const dateStr = getPoDateStr(item);
+        if (dateStr && dateStr > toDate) return false;
+      }
+
+      return true;
+    });
+  };
+
+  // Memoized options for filter dropdowns
+  const poFilterOptions = useMemo(() => {
+    const set = new Set();
+    data.forEach(d => { if (d.po_no) set.add(String(d.po_no).trim()); });
+    const vals = [...set].sort();
+    return [{ label: 'All PO Numbers (Optional)', value: '' }, ...vals.map(v => ({ label: v, value: v }))];
+  }, [data]);
+
+  const supplierFilterOptions = useMemo(() => {
+    const set = new Set();
+    data.forEach(d => { if (d.supplier_name) set.add(String(d.supplier_name).trim()); });
+    suppliers.forEach(s => { if (s.label) set.add(String(s.label).trim()); });
+    const vals = [...set].sort();
+    return [{ label: 'All Suppliers (Optional)', value: '' }, ...vals.map(v => ({ label: v, value: v }))];
+  }, [data, suppliers]);
+
+  const rrFilterOptions = useMemo(() => {
+    const set = new Set();
+    data.forEach(d => { if (d.rr_no) set.add(String(d.rr_no).trim()); });
+    const vals = [...set].sort();
+    return [{ label: 'All RR Numbers (Optional)', value: '' }, ...vals.map(v => ({ label: v, value: v }))];
+  }, [data]);
+
+  const materialFilterOptions = useMemo(() => {
+    const set = new Set();
+    data.forEach(d => {
+      getPoMaterialNames(d).forEach(m => set.add(m));
+    });
+    materialOption.forEach(m => {
+      if (m.label) set.add(String(m.label).trim());
+    });
+    const vals = [...set].sort();
+    return [{ label: 'All Materials (Optional)', value: '' }, ...vals.map(v => ({ label: v, value: v }))];
+  }, [data, materialOption]);
+
+  const poStatusFilterOptions = [
+    { label: 'All Status (Optional)', value: '' },
+    { label: 'Pending', value: '1' },
+    { label: 'In-Transit', value: '2' },
+    { label: 'Active', value: '3' },
+    { label: 'Closed', value: '4' },
+  ];
+
+  // Convert number to Indian currency words
+  const numberToWords = (num) => {
+    const a = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+    const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+    const inWords = (n) => {
+      let str = '';
+      if (n >= 10000000) {
+        str += inWords(Math.floor(n / 10000000)) + ' Crore ';
+        n %= 10000000;
+      }
+      if (n >= 100000) {
+        str += inWords(Math.floor(n / 100000)) + ' Lakh ';
+        n %= 100000;
+      }
+      if (n >= 1000) {
+        str += inWords(Math.floor(n / 1000)) + ' Thousand ';
+        n %= 1000;
+      }
+      if (n >= 100) {
+        str += inWords(Math.floor(n / 100)) + ' Hundred ';
+        n %= 100;
+      }
+      if (n > 0) {
+        if (n < 20) str += a[n];
+        else str += b[Math.floor(n / 10)] + (n % 10 ? ' ' + a[n % 10] : '');
+      }
+      return str.trim();
+    };
+
+    const rounded = Math.round(Number(num) || 0);
+    if (rounded <= 0) return 'Zero Rupees Only';
+    return `${inWords(rounded)} Rupees Only`;
+  };
+
+  // Load Krishi Logo as Base64 for PDF rendering (circular emblem first)
+  const loadLogoBase64 = () => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'Anonymous';
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0);
+          resolve(canvas.toDataURL('image/png'));
+        } catch (e) {
+          resolve(null);
+        }
+      };
+      img.onerror = () => {
+        const img2 = new Image();
+        img2.crossOrigin = 'Anonymous';
+        img2.onload = () => {
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img2.naturalWidth || img2.width;
+            canvas.height = img2.naturalHeight || img2.height;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img2, 0, 0);
+            resolve(canvas.toDataURL('image/png'));
+          } catch {
+            resolve(null);
+          }
+        };
+        img2.onerror = () => resolve(null);
+        img2.src = '/assets/krishi.png';
+      };
+      img.src = '/krishi-logo.png';
+    });
+  };
+
+  // Render exact Krishi DC-format Purchase Order Voucher on jsPDF document
+  const renderPoVoucher = (doc, item, logoImg = null, isBulk = false, currentIndex = 1, totalCount = 1) => {
+    const startX = 14;
+    const pageWidth = 210;
+    const contentWidth = 182; // 210 - 28
+
+    // ── 1. Subtle Background Watermark ─────────────────────────────────
+    try {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(65);
+      doc.setTextColor(244, 244, 248);
+      doc.text('KRISHI', pageWidth / 2, 140, { align: 'center', angle: 35 });
+    } catch (e) { /* skip if angle unsupported */ }
+
+    // ── 2. Top Centered Document Title ────────────────────────────────
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(13);
+    doc.setTextColor(0, 0, 0);
+    doc.text('DELIVERY CHALLAN', pageWidth / 2, 15, { align: 'center' });
+
+    // ── 3. Header: Left Circular Logo & Right Company Address ─────────
+    const logoX = startX + 1;
+    const logoY = 19;
+    const logoSize = 34; // 34x34mm circular emblem
+    if (logoImg) {
+      try {
+        doc.addImage(logoImg, 'PNG', logoX, logoY, logoSize, logoSize);
+      } catch (e) {
+        console.warn('Could not draw logo in PDF:', e);
+      }
+    }
+
+    // Right Company Address
+    const addressX = startX + 78; // x = 92mm
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(0, 0, 0);
+    doc.text('KRISHI NUTRITION COMPANY PRIVATE LIMITED', addressX, 23.5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(30, 30, 30);
+    doc.text('Regd. Office : Plot No. KK8, KK9, 3rd Cross Street Road,', addressX, 28);
+    doc.text('Sipcot Industrial Growth Center', addressX, 32.5);
+    doc.text('PERUNDURAI - 638052, Erode, Tamil Nadu', addressX, 37);
+    doc.text('CIN : U15200TZ2013PTC019958', addressX, 41.5);
+    doc.text('GSTIN : 33AAFCK3415K1ZO', addressX, 46);
+
+    if (isBulk) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(7.5);
+      doc.setTextColor(100, 100, 100);
+      doc.text(`[ Record ${currentIndex} of ${totalCount} ]`, startX + contentWidth, 53, { align: 'right' });
+    }
+
+    // ── 4. Two-Column Framed Info Box ─────────────────────────────────
+    const boxY = 56;
+    const boxHeight = 48;
+    const midX = startX + 96; // 110mm
+
+    doc.setDrawColor(0, 0, 0);
+    doc.setLineWidth(0.6);
+    doc.rect(startX, boxY, contentWidth, boxHeight);
+    doc.line(midX, boxY, midX, boxY + boxHeight);
+
+    // ── LEFT COLUMN ───────────────────────────────────────────────────
+    const lx = startX + 3.5;
+    doc.setFontSize(8);
+    doc.setTextColor(0, 0, 0);
+
+    // Dispatch From
+    doc.setFont('helvetica', 'bold');
+    doc.text('Dispatch From', lx, boxY + 5.5);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Krishi Nutrition Company Private Limited', lx, boxY + 9.8);
+    doc.text('C/o Railway Goodshed', lx, boxY + 13.8);
+    doc.text('Erode, Tamil Nadu - 638002', lx, boxY + 17.8);
+    doc.text('GSTIN : 33AAFCK3415K1ZO', lx, boxY + 21.8);
+
+    // Billed / Ship to
+    doc.setFont('helvetica', 'bold');
+    doc.text('Billed / Ship to', lx, boxY + 27.5);
+    doc.setFont('helvetica', 'normal');
+
+    const leftColWidth = midX - startX - 7;
+    const shipName = String(item.supplier_name || 'KRISHI NUTRITION COMPANY PRIVATE LIMITED');
+    const shipLines = doc.splitTextToSize(shipName, leftColWidth);
+    doc.text(shipLines[0] || '', lx, boxY + 31.8);
+
+    if (item.supplier_address) {
+      const addrLines = doc.splitTextToSize(String(item.supplier_address), leftColWidth);
+      doc.text(addrLines[0] || 'DOOR NO: 5/3/2, PACHAL VILLAGE PUDUCHATRAM POST,', lx, boxY + 35.8);
+      doc.text(addrLines[1] || 'NAMAKKAL, Tamil Nadu - 637018', lx, boxY + 39.8);
+    } else {
+      doc.text('DOOR NO: 5/3/2, PACHAL VILLAGE PUDUCHATRAM POST,', lx, boxY + 35.8);
+      doc.text('NAMAKKAL, Tamil Nadu - 637018', lx, boxY + 39.8);
+    }
+    doc.text('GSTIN : ' + String(item.supplier_gstin || '33AAFCK3415K1ZO'), lx, boxY + 43.8);
+
+    // ── RIGHT COLUMN (5 rows, evenly spaced without Truck No) ──────────
+    const rKeyX = midX + 4;
+    const rValX = midX + 30;
+
+    const rightRows = [
+      { label: 'Doc No.',      value: String(item.po_no || ('DC/6/EGE/' + String(item.id || '00486'))) },
+      { label: 'Date',         value: String(item.supplier_invoice_date || item.po_date || item.rr_date || new Date().toLocaleDateString('en-GB')) },
+      { label: 'RR No',        value: String(item.rr_no || '-') },
+      { label: 'Ref Po.',      value: String(item.po_no || '-') },
+      { label: 'Ref Bill No.', value: String(item.bill_no || '-') },
+    ];
+
+    doc.setFontSize(8);
+    rightRows.forEach((row, i) => {
+      const ry = boxY + 7.5 + i * 8.2;
+      doc.setFont('helvetica', 'bold');
+      doc.setTextColor(0, 0, 0);
+      doc.text(row.label, rKeyX, ry);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(20, 20, 20);
+      doc.text(String(row.value), rValX, ry);
+    });
+
+    // ── 5. Red Asterisk Label: "* Amount in INR" ──────────────────────
+    const labelY = boxY + boxHeight + 5;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(220, 0, 0);
+    doc.text('*', pageWidth / 2 - 13, labelY);
+    doc.setTextColor(0, 0, 0);
+    doc.text(' Amount in INR', pageWidth / 2 - 11, labelY);
+
+    // ── 6. Materials Table (10 Columns) ───────────────────────────────
+    const tableRows = [];
+    const materials = Array.isArray(item.materials) ? item.materials : [];
+
+    materials.forEach(mat => {
+      const qty = Number(mat.quantity) || 0;
+      const rate = Number(mat.price) || 0;
+      const bags = Number(mat.noOfBags) || 0;
+      const total = qty * rate;
+      const qtyMts = qty >= 1000 ? (qty / 1000).toFixed(3) : (qty > 0 ? qty.toFixed(3) : '-');
+
+      tableRows.push([
+        String(mat.name || 'MAIZE').toUpperCase(),
+        '10059000',
+        bags > 0 ? String(bags) : '-',
+        qtyMts,
+        rate > 0 ? String(rate) : '-',
+        total > 0 ? String(Math.round(total)) : '-',
+        '0',
+        '0',
+        '0.00',
+        total > 0 ? String(Math.round(total)) : '-'
+      ]);
+    });
+
+    if (tableRows.length === 0 && item.material_view) {
+      tableRows.push([
+        String(item.material_view).toUpperCase(),
+        '10059000',
+        '-',
+        '-',
+        '-',
+        '-',
+        '0',
+        '0',
+        '0.00',
+        '-'
+      ]);
+    }
+
+    autoTable(doc, {
+      startY: labelY + 2,
+      margin: { left: startX, right: startX },
+      head: [[
+        'Material',
+        'HSN\nCode',
+        'No of\nBag',
+        'Qty\n(MTS)',
+        'Rate (Inc of\nTax)',
+        'Basic',
+        'CGST\n2.5%',
+        'SGST\n2.5%',
+        'Round\nOff',
+        'Total'
+      ]],
+      body: tableRows,
+      theme: 'grid',
+      styles: {
+        lineWidth: 0.35,
+        lineColor: [0, 0, 0],
+        textColor: [0, 0, 0],
+        valign: 'middle'
+      },
+      headStyles: {
+        fillColor: [255, 255, 255],
+        textColor: [0, 0, 0],
+        fontStyle: 'bold',
+        fontSize: 7.5,
+        halign: 'center',
+        valign: 'middle',
+        lineWidth: 0.35,
+        lineColor: [0, 0, 0]
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: [0, 0, 0],
+        halign: 'center',
+        valign: 'middle',
+        lineWidth: 0.35,
+        lineColor: [0, 0, 0]
+      },
+      columnStyles: {
+        0: { halign: 'center', cellWidth: 22 },
+        1: { halign: 'center', cellWidth: 18 },
+        2: { halign: 'center', cellWidth: 16 },
+        3: { halign: 'center', cellWidth: 18 },
+        4: { halign: 'center', cellWidth: 24 },
+        5: { halign: 'center', cellWidth: 20 },
+        6: { halign: 'center', cellWidth: 16 },
+        7: { halign: 'center', cellWidth: 16 },
+        8: { halign: 'center', cellWidth: 16 },
+        9: { halign: 'center', cellWidth: 16 }
+      }
+    });
+
+    const finalTableY = doc.lastAutoTable ? doc.lastAutoTable.finalY : labelY + 25;
+
+    // ── 7. Exemption Paragraph ─────────────────────────────────────────
+    const exY = finalTableY + 7;
+    doc.setFontSize(7.2);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(0, 0, 0);
+    const exText = 'Exemption from generation of E-Way Bill: Rule 138(14)(e) of Central Goods and Service Tax Rules, 2017 exempts from the requirement of E-Way Bill generation for Goods except De-oiled cake specified in theSchedule appended to Notification No. 2/2017 Central Tax (Rate) dt.28.06.17. Goods included in this Delivery Challan (ST) are exempt as per the said Notification and hence E-Way Bill is not generated';
+
+    const splitEx = doc.splitTextToSize(exText, contentWidth - 4);
+    doc.text(splitEx, pageWidth / 2, exY, { align: 'center', lineHeightFactor: 1.3 });
+
+    // ── 8. System Generated Dotted / Dashed Box ────────────────────────
+    const exHeight = splitEx.length * 3.6;
+    const box2Y = exY + exHeight + 5;
+    doc.setDrawColor(100, 100, 100);
+    doc.setLineWidth(0.4);
+    doc.setLineDashPattern([2, 2], 0);
+    doc.rect(startX, box2Y, contentWidth, 8);
+    doc.setLineDashPattern([], 0); // reset dash
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(0, 0, 0);
+  };
+
+  // Download Single PO as PDF Voucher
+  const downloadSinglePoPdf = async (item) => {
+    try {
+      const doc = new jsPDF();
+      const logoImg = await loadLogoBase64();
+      renderPoVoucher(doc, item, logoImg, false, 1, 1);
+      doc.save(`PO_${String(item.po_no || 'Document').replace(/[^a-zA-Z0-9_-]/g, '_')}.pdf`);
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: `PO PDF downloaded successfully`,
+        showConfirmButton: false,
+        timer: 2000
+      });
+    } catch (err) {
+      console.error('Error generating single PO PDF:', err);
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Failed to generate PDF', showConfirmButton: false, timer: 2000 });
+    }
+  };
+
+  // Bulk download filtered POs as comprehensive PDF
+  const handleBulkDownloadPO = async () => {
+    const hasAnyFilter = bulkSelectedPo || bulkSelectedSupplier || bulkSelectedRR || bulkSelectedMaterial || bulkSelectedStatus || bulkFromDate || bulkToDate;
+    if (!hasAnyFilter) {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'Please select at least one filter or date range', showConfirmButton: false, timer: 2000 });
+      return;
+    }
+    if (bulkFromDate && bulkToDate && bulkFromDate > bulkToDate) {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: 'From date cannot be after To date', showConfirmButton: false, timer: 2000 });
+      return;
+    }
+
+    const filtered = filterPOForBulk(data, bulkFromDate, bulkToDate, bulkSelectedPo, bulkSelectedSupplier, bulkSelectedRR, bulkSelectedMaterial, bulkSelectedStatus);
+    if (filtered.length === 0) {
+      Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'No Purchase Orders found for selected filter', showConfirmButton: false, timer: 2500 });
+      return;
+    }
+
+    setIsBulkDownloading(true);
+    try {
+      const doc = new jsPDF();
+      const logoImg = await loadLogoBase64();
+
+      for (let i = 0; i < filtered.length; i++) {
+        if (i > 0) doc.addPage();
+        renderPoVoucher(doc, filtered[i], logoImg, true, i + 1, filtered.length);
+      }
+
+      let filename = 'Bulk_PO_Vouchers';
+      if (bulkSelectedPo) filename += `_PO_${bulkSelectedPo.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      if (bulkFromDate && bulkToDate) filename += `_${bulkFromDate}_to_${bulkToDate}`;
+      filename += '.pdf';
+
+      doc.save(filename);
+
+      setIsBulkDownloadOpen(false);
+      setBulkSelectedPo('');
+      setBulkSelectedSupplier('');
+      setBulkSelectedRR('');
+      setBulkSelectedMaterial('');
+      setBulkSelectedStatus('');
+      setBulkFromDate('');
+      setBulkToDate('');
+
+      Swal.fire({
+        toast: true,
+        position: 'top-end',
+        icon: 'success',
+        title: `Downloaded PDF containing ${filtered.length} PO(s)`,
+        showConfirmButton: false,
+        timer: 3000
+      });
+    } catch (err) {
+      console.error('Error generating bulk PO PDF:', err);
+      Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Failed to generate bulk PDF', showConfirmButton: false, timer: 2000 });
+    } finally {
+      setIsBulkDownloading(false);
+    }
+  };
+
   const filteredData = data.filter((item) => {
     return (
       item.po_no.toString().toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -371,8 +966,6 @@ const POMaster = () => {
   // Pagination logic
   const startIndex = (currentPage - 1) * itemsPerPage;
   const paginatedData = filteredData.slice(startIndex, startIndex + itemsPerPage);
-
-  // Handle pagination
   const goToFirstPage = () => setCurrentPage(1);
   const goToLastPage = () => setCurrentPage(totalPages);
   const goToNextPage = () => setCurrentPage((prev) => Math.min(prev + 1, totalPages));
@@ -380,6 +973,281 @@ const POMaster = () => {
 
   return (
     <div className={` rounded-lg shadow flex-1 `}>
+
+      {/* Bulk Download Modal */}
+      {isBulkDownloadOpen && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex justify-center items-center z-50 p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl font-poppins overflow-hidden flex flex-col max-h-[94vh] border border-gray-100">
+
+            {/* Header */}
+            <div className="flex justify-between items-center px-7 py-5 bg-gradient-to-r from-orange-500 via-orange-500 to-amber-500 shrink-0">
+              <div className="flex items-center gap-3.5 text-white">
+                <div className="p-2.5 bg-white/20 rounded-xl">
+                  <MdDownloadForOffline size={24} className="text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold tracking-tight">Bulk Download — Purchase Orders</h2>
+                  <p className="text-xs text-orange-100 mt-0.5">Apply filters below and export matching PO vouchers as a combined PDF</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setIsBulkDownloadOpen(false);
+                  setBulkFromDate('');
+                  setBulkToDate('');
+                  setBulkSelectedPo('');
+                  setBulkSelectedSupplier('');
+                  setBulkSelectedRR('');
+                  setBulkSelectedMaterial('');
+                  setBulkSelectedStatus('');
+                }}
+                className="text-white/80 hover:text-white hover:bg-white/20 rounded-full p-1.5 transition"
+                title="Close"
+              >
+                <IoCloseSharp size={22} />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="px-7 py-5 space-y-5 overflow-y-auto flex-1">
+
+              {/* Quick Preset & Clear */}
+              <div className="flex items-center justify-between bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
+                <div>
+                  <span className="text-xs font-semibold text-orange-900 uppercase tracking-wider block">Quick Presets</span>
+                  <span className="text-xs text-orange-700/70">Use presets or set custom filters below</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={applyLastOneMonth}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold rounded-lg transition shadow-sm"
+                  >
+                    <BsCalendarDateFill size={12} />
+                    Last 1 Month
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBulkFromDate('');
+                      setBulkToDate('');
+                      setBulkSelectedPo('');
+                      setBulkSelectedSupplier('');
+                      setBulkSelectedRR('');
+                      setBulkSelectedMaterial('');
+                      setBulkSelectedStatus('');
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-gray-300 text-gray-600 hover:text-red-600 hover:border-red-300 hover:bg-red-50 text-xs font-semibold rounded-lg transition shadow-sm"
+                  >
+                    <RiRefreshLine size={13} />
+                    Clear All
+                  </button>
+                </div>
+              </div>
+
+              {/* Divider label */}
+              <div className="flex items-center gap-3">
+                <div className="flex-1 h-px bg-gray-200" />
+                <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Filter by</span>
+                <div className="flex-1 h-px bg-gray-200" />
+              </div>
+
+              {/* Filter Dropdowns Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                {/* PO Number */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">PO Number</label>
+                  <SearchableSelect
+                    options={poFilterOptions}
+                    value={bulkSelectedPo}
+                    onChange={setBulkSelectedPo}
+                    placeholder="Select PO..."
+                    searchPlaceholder="Search PO..."
+                  />
+                </div>
+
+                {/* Supplier */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Supplier / Vendor</label>
+                  <SearchableSelect
+                    options={supplierFilterOptions}
+                    value={bulkSelectedSupplier}
+                    onChange={setBulkSelectedSupplier}
+                    placeholder="Select Supplier..."
+                    searchPlaceholder="Search supplier..."
+                  />
+                </div>
+
+                {/* RR No */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">RR Number</label>
+                  <SearchableSelect
+                    options={rrFilterOptions}
+                    value={bulkSelectedRR}
+                    onChange={setBulkSelectedRR}
+                    placeholder="Select RR No..."
+                    searchPlaceholder="Search RR..."
+                  />
+                </div>
+
+                {/* Material */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">Material</label>
+                  <SearchableSelect
+                    options={materialFilterOptions}
+                    value={bulkSelectedMaterial}
+                    onChange={setBulkSelectedMaterial}
+                    placeholder="Select Material..."
+                    searchPlaceholder="Search material..."
+                  />
+                </div>
+
+                {/* Status */}
+                <div className="space-y-1.5">
+                  <label className="block text-xs font-semibold text-gray-600 uppercase tracking-wide">PO Status</label>
+                  <SearchableSelect
+                    options={poStatusFilterOptions}
+                    value={bulkSelectedStatus}
+                    onChange={setBulkSelectedStatus}
+                    placeholder="Select Status..."
+                    searchPlaceholder="Search status..."
+                  />
+                </div>
+              </div>
+
+              {/* Dedicated Date Range Section */}
+              <div className="bg-gradient-to-r from-orange-50/70 via-amber-50/40 to-orange-50/70 border border-orange-200/80 rounded-xl p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-md bg-orange-500 text-white flex items-center justify-center shadow-sm">
+                      <BsCalendarDateFill size={11} />
+                    </div>
+                    <span className="text-xs font-bold text-orange-950 uppercase tracking-wider">Date Range Filter</span>
+                    <span className="text-[11px] text-orange-700/80 font-medium">(Optional)</span>
+                  </div>
+                  {(bulkFromDate || bulkToDate) && (
+                    <button
+                      type="button"
+                      onClick={() => { setBulkFromDate(''); setBulkToDate(''); }}
+                      className="inline-flex items-center gap-1 text-xs text-red-600 hover:text-red-700 font-semibold hover:underline"
+                    >
+                      <RiRefreshLine size={12} />
+                      Clear Dates
+                    </button>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                      From Date
+                    </label>
+                    <input
+                      type="date"
+                      value={bulkFromDate}
+                      onChange={(e) => setBulkFromDate(e.target.value)}
+                      className="w-full h-10 px-3.5 border border-gray-300 rounded-lg text-sm bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-sm transition"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                      To Date
+                    </label>
+                    <input
+                      type="date"
+                      value={bulkToDate}
+                      onChange={(e) => setBulkToDate(e.target.value)}
+                      className="w-full h-10 px-3.5 border border-gray-300 rounded-lg text-sm bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-orange-500 shadow-sm transition"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Live Preview Count Card */}
+              {(() => {
+                const hasAnyFilter = Boolean(bulkSelectedPo || bulkSelectedSupplier || bulkSelectedRR || bulkSelectedMaterial || bulkSelectedStatus || bulkFromDate || bulkToDate);
+                const matchingCount = filterPOForBulk(
+                  data,
+                  bulkFromDate,
+                  bulkToDate,
+                  bulkSelectedPo,
+                  bulkSelectedSupplier,
+                  bulkSelectedRR,
+                  bulkSelectedMaterial,
+                  bulkSelectedStatus
+                ).length;
+
+                return (
+                  <div className={`rounded-xl p-4 flex items-center gap-4 border transition-all duration-200 ${hasAnyFilter && matchingCount > 0 ? 'bg-gradient-to-r from-orange-50 to-amber-50 border-orange-200' : 'bg-gray-50 border-gray-200'}`}>
+                    <div className={`w-14 h-14 rounded-2xl font-bold text-xl flex items-center justify-center shadow shrink-0 ${hasAnyFilter && matchingCount > 0 ? 'bg-orange-500 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                      {matchingCount}
+                    </div>
+                    <div className="flex-1">
+                      <span className={`text-sm font-bold block ${hasAnyFilter && matchingCount > 0 ? 'text-orange-900' : 'text-gray-600'}`}>
+                        {hasAnyFilter
+                          ? `${matchingCount} ${matchingCount === 1 ? 'Purchase Order' : 'Purchase Orders'} matched`
+                          : 'No filter selected'}
+                      </span>
+                      <span className="text-xs text-gray-500 mt-0.5 block">
+                        {hasAnyFilter
+                          ? (matchingCount > 0 ? 'All matched records will be compiled into a single PDF download' : 'No records match this filter combination — try adjusting your selection')
+                          : 'Choose at least one filter above to preview matching records'}
+                      </span>
+                    </div>
+                    {hasAnyFilter && matchingCount > 0 && (
+                      <div className="shrink-0 text-orange-500">
+                        <MdFileDownload size={28} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center gap-3 px-7 py-4 bg-gray-50 border-t border-gray-100 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsBulkDownloadOpen(false);
+                  setBulkFromDate('');
+                  setBulkToDate('');
+                  setBulkSelectedPo('');
+                  setBulkSelectedSupplier('');
+                  setBulkSelectedRR('');
+                  setBulkSelectedMaterial('');
+                  setBulkSelectedStatus('');
+                }}
+                disabled={isBulkDownloading}
+                className="h-11 px-6 bg-white border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-100 active:bg-gray-200 transition text-sm font-semibold shadow-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleBulkDownloadPO}
+                disabled={isBulkDownloading || !(bulkSelectedPo || bulkSelectedSupplier || bulkSelectedRR || bulkSelectedMaterial || bulkSelectedStatus || bulkFromDate || bulkToDate)}
+                className="flex-1 h-11 px-6 bg-orange-500 hover:bg-orange-600 active:bg-orange-700 text-white rounded-xl transition text-sm font-semibold flex items-center justify-center gap-2 shadow-md shadow-orange-500/30 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-orange-500"
+              >
+                {isBulkDownloading ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+                    </svg>
+                    <span>Generating PDF...</span>
+                  </>
+                ) : (
+                  <>
+                    <MdFileDownload size={20} />
+                    <span>Download Selected (PDF)</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {modalIsOpen ? (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex justify-center items-center z-50">
@@ -478,74 +1346,70 @@ const POMaster = () => {
                   options={statusOption}
                   value={formData.status}
                   onChange={(val) => setFormData(prev => ({ ...prev, status: val }))}
-                  statusColor={`border ${formData.status == 1
-                    ? "border-yellow-700 bg-yellow-50"
-                    : formData.status == 2
-                      ? "border-blue-700 bg-[#edf3ff]"
-                      : formData.status == 3
-                        ? "border-green-700 bg-green-50"
-                        : formData.status == 4
-                          ? "border-red-700 bg-red-50"
-                          : "border-gray-400 bg-gray-50"
-                    }`}
-
                 />
               </div>
 
-              <div className='border col-span-3 rounded-lg p-3'>
-                {/* <div className='flex items-center justify-between gap-x-6'> */}
-                <div className='grid-cols-3 grid gap-x-5'>
+            </div>
 
-                  <div className='w-full'>
+            <div className="border border-dashed my-5"></div>
+
+            <div className="w-full">
+              <h1 className="header text-lg font-semibold">Material</h1>
+
+              <div className="flex gap-4">
+
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4 items-center">
+                  <div>
                     <CustomDropdown
-                      label="Materials"
+                      label="Select Material"
                       options={materialOption}
                       value={selectedMaterial}
                       onChange={(val) => setSelectedMaterial(val)}
                     />
                   </div>
 
-
-                  <div className='w-full'>
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Quantity</label>
                     <input
                       type="number"
                       name="quantity"
+                      placeholder="Quantity"
                       value={quantity}
-                      className="w-full p-3 py-2.5 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                       onChange={(e) => setQuantity(e.target.value)}
-                      placeholder='Enter Material Quantity'
+                      className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                     />
                   </div>
 
-                  <CustomDropdown
-                    label="Unit"
-                    options={unitList}
-                    value={selectedUnit}
-                    onChange={(val) => setSelectedUnit(val)}
-                  />
+                  <div>
+                    <CustomDropdown
+                      label="Select Unit"
+                      options={unitList}
+                      value={selectedUnit}
+                      onChange={(val) => setSelectedUnit(val)}
+                    />
+                  </div>
 
-                  <div className='w-full'>
+                  <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Price</label>
                     <input
                       type="number"
                       name="price"
+                      placeholder="Price"
                       value={price}
-                      className="w-full p-3 py-2.5 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                       onChange={(e) => setPrice(e.target.value)}
-                      placeholder='Enter Material Price'
+                      className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                     />
                   </div>
 
-                  <div className='w-full'>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">No Of Bags</label>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">No of Bags</label>
                     <input
                       type="number"
-                      name="bags"
+                      name="noOfBags"
+                      placeholder="No of bags"
                       value={noOfBags}
-                      className="w-full p-3 py-2.5 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                       onChange={(e) => setNoOfBags(e.target.value)}
-                      placeholder='Enter No Of Bags'
+                      className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                     />
                   </div>
 
@@ -675,14 +1539,28 @@ const POMaster = () => {
                   className=" py-2 px-2 ps-10 border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-500"
                 />
               </div>
-
-              {/* <div className="px-2 py-2  border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-orange-500  shadow-sm cursor-pointer" onChange={() => setSelectDate(calenderInputRef.current.value)}>
-                <span className=' text-xs px-4 opacity-50 '>{selectDate}</span>
-                <input type="date" className='w-4' ref={calenderInputRef} />
-              </div> */}
             </div>
 
-            <div className='space-x-5'>
+            <div className='space-x-3 flex items-center'>
+
+              <button
+                onClick={() => {
+                  setBulkFromDate('');
+                  setBulkToDate('');
+                  setBulkSelectedPo('');
+                  setBulkSelectedSupplier('');
+                  setBulkSelectedRR('');
+                  setBulkSelectedMaterial('');
+                  setBulkSelectedStatus('');
+                  setIsBulkDownloadOpen(true);
+                }}
+                className="px-4 py-2 bg-[#E8F0FE] text-[#1a73e8] border border-blue-200 rounded-lg hover:bg-blue-500 hover:text-white transition"
+              >
+                <div className="flex gap-2 items-center text-xs">
+                  <MdDownloadForOffline size={16} />
+                  <span>Bulk Download</span>
+                </div>
+              </button>
 
               <button onClick={handleExport} className="px-4 py-2 bg-[#EFE8E0] text-[#F3890A] border rounded-lg hover:bg-orange-500 hover:text-white">
                 <div className="flex gap-2 items-center text-xs ">
@@ -690,13 +1568,6 @@ const POMaster = () => {
                   <span>Export</span>
                 </div>
               </button>
-
-              {/* <button className="px-4 py-2 bg-orange-500 text-white border rounded-lg  hover:text-white" onClick={openModal}>
-                <div className='flex items-center gap-2 text-xs' >
-                  <LuPlus size={16} />
-                  <span >Add Data</span>
-                </div>
-              </button> */}
 
             </div>
           </div>
@@ -716,9 +1587,7 @@ const POMaster = () => {
                 <th className="p-4 text-center text-sm text-black">RR No</th>
                 <th className="p-4 text-center text-sm text-black">Status</th>
                 <th className="p-4 text-center text-sm text-black">Materials</th>
-                {
-                  (!purchaseOrder?.edit && !purchaseOrder?.delete) ? "" : <th className="p-4 text-center text-sm text-black">Actions</th>
-                }
+                <th className="p-4 text-center text-sm text-black">Actions</th>
 
               </tr>
             </thead>
@@ -731,7 +1600,6 @@ const POMaster = () => {
                   <td className="p-4 text-sm opacity-65">{item.bill_no}</td>
                   <td className="p-4 text-sm opacity-65">{item.supplier_invoice_date || '-'}</td>
                   <td className="p-4 text-sm opacity-65">{item.rr_no}</td>
-                  {/* <td className="p-4 text-sm opacity-65">{item.st}</td> */}
 
                   <td className="p-4 text-sm opacity-65">
                     <span
@@ -760,26 +1628,28 @@ const POMaster = () => {
                   </td>
 
                   <td className="p-4 opacity-65 w-[20%] text-sm">{item.material_view}</td>
-                  {
-                    (!purchaseOrder?.edit && !purchaseOrder?.delete) ?
-                      ""
-                      :
-                      <td className="p-4 text-right space-x-5 flex justify-center opacity-65">
-                        {
-                          purchaseOrder?.edit && <button onClick={() => handleEdit(item)} className=" hover:text-gray-700">
-                            <FiEdit2 size={20} />
-                          </button>
-                        }
+                  <td className="p-4 text-center space-x-4 flex justify-center items-center opacity-65">
+                    <button
+                      onClick={() => downloadSinglePoPdf(item)}
+                      title="Download PO PDF"
+                      className="hover:text-orange-500 text-gray-600 transition"
+                    >
+                      <MdFileDownload size={20} />
+                    </button>
 
-                        {
-                          purchaseOrder?.delete && <button onClick={() => handleDelete(item.id)} className=" hover:text-gray-700">
+                    {
+                      purchaseOrder?.edit && <button onClick={() => handleEdit(item)} title="Edit PO" className=" hover:text-gray-700">
+                        <FiEdit2 size={18} />
+                      </button>
+                    }
 
-                            <RiDeleteBin6Line size={20} />
-                          </button>
-                        }
+                    {
+                      purchaseOrder?.delete && <button onClick={() => handleDelete(item.id)} title="Delete PO" className=" hover:text-gray-700">
+                        <RiDeleteBin6Line size={18} />
+                      </button>
+                    }
 
-                      </td>
-                  }
+                  </td>
 
                 </tr>
               ))}

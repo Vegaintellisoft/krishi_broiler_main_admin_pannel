@@ -59,26 +59,36 @@ const BroilerSupply = () => {
         return `${y}-${m}-${day}`;
     };
 
-    const getMinAllowedDateForDC = (dcDateStr, days) => {
-        if (!dcDateStr) return '';
+    // Min allowed SAP post date = the bill (DC) date itself
+    const getMinAllowedDateForDC = (dcDateStr) => {
+        if (!dcDateStr) return getMaxDateString();
         const d = new Date(dcDateStr);
-        if (isNaN(d.getTime())) return '';
+        if (isNaN(d.getTime())) return getMaxDateString();
         d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() - Number(days || 5));
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
         return `${y}-${m}-${day}`;
     };
 
-    // Max allowed SAP post date = today (admin can always use today for old records)
-    const getMaxAllowedDateForDC = () => getMaxDateString();
-
-    // Returns the DC/bill date as YYYY-MM-DD string (default SAP post date)
-    const getDCDateString = (dcDateStr) => {
-        if (!dcDateStr) return getTodayDateString();
+    // Max allowed SAP post date = bill_date + allowedDays
+    const getMaxAllowedDateForDC = (dcDateStr, days) => {
+        if (!dcDateStr) return getMaxDateString();
         const d = new Date(dcDateStr);
-        if (isNaN(d.getTime())) return getTodayDateString();
+        if (isNaN(d.getTime())) return getMaxDateString();
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() + Number(days || 5));
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${m}-${day}`;
+    };
+
+    // Returns the DC/bill date as YYYY-MM-DD string
+    const getDCDateString = (dcDateStr) => {
+        if (!dcDateStr) return getMaxDateString();
+        const d = new Date(dcDateStr);
+        if (isNaN(d.getTime())) return getMaxDateString();
         d.setHours(0, 0, 0, 0);
         const y = d.getFullYear();
         const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -217,6 +227,7 @@ const BroilerSupply = () => {
                 }
                 return {
                     ...item,
+                    rate: item.rate !== undefined && item.rate !== null ? item.rate : parsedRaw?.rate,
                     raw_data: parsedRaw
                 };
             });
@@ -332,27 +343,26 @@ const BroilerSupply = () => {
             return;
         }
 
-        // Default SAP post date = today so old records can pass SAP's back-date window
-        const sapPostDate = sapPostDates[item.doc_no] || getMaxDateString();
+        // Default SAP post date = bill date
+        const sapPostDate = sapPostDates[item.doc_no] || getDCDateString(item.date);
 
-        // Validate: Min = DC date - allowedDays, Max = today
+        // Validate: Min = bill date, Max = bill date + allowedDays
         const selectedD = new Date(sapPostDate);
         selectedD.setHours(0, 0, 0, 0);
 
-        const dcD = new Date(item.date);
-        dcD.setHours(0, 0, 0, 0);
+        const minStr = getMinAllowedDateForDC(item.date);
+        const minD = new Date(minStr);
+        minD.setHours(0, 0, 0, 0);
 
-        const minD = new Date(dcD);
-        minD.setDate(dcD.getDate() - Number(allowedDays || 5));
-
-        const maxD = new Date();
+        const maxStr = getMaxAllowedDateForDC(item.date, allowedDays);
+        const maxD = new Date(maxStr);
         maxD.setHours(0, 0, 0, 0);
 
         if (selectedD < minD || selectedD > maxD) {
             Swal.fire({
                 icon: "error",
                 title: "Invalid SAP Post Date",
-                text: `SAP Post Date must be between ${minD.toLocaleDateString('en-GB').replace(/\//g, '-')} and Today (${allowedDays} days window from bill date: ${dcD.toLocaleDateString('en-GB').replace(/\//g, '-')}).`
+                text: `SAP Post Date must be between ${minD.toLocaleDateString('en-GB').replace(/\//g, '-')} and ${maxD.toLocaleDateString('en-GB').replace(/\//g, '-')} (${allowedDays} days from bill date: ${minD.toLocaleDateString('en-GB').replace(/\//g, '-')}).`
             });
             return;
         }
@@ -384,8 +394,12 @@ const BroilerSupply = () => {
                 customer_details: customerDetails
             }, { params: { doc_no: item.doc_no } });
 
-            // Step 2: Submit to SAP (with admin-selected SAP Post Date, defaulting to today)
-            const res = await axios.post("broiler/bill-of-supply/submit", { doc_no: item.doc_no, sap_post_date: sapPostDate });
+            // Step 2: Submit to SAP (with admin-selected SAP Post Date and Rate)
+            const res = await axios.post("broiler/bill-of-supply/submit", { 
+                doc_no: item.doc_no, 
+                sap_post_date: sapPostDate,
+                rate: Number(newRate)
+            });
 
             if (res.data?.status) {
                 Swal.fire({
@@ -691,9 +705,7 @@ const BroilerSupply = () => {
                                         <td className="py-2 px-1 text-center">
                                             {isSubmitted ? (
                                                 <span className="opacity-65 whitespace-nowrap text-sm">
-                                                    {item.sap_post_date
-                                                        ? String(item.sap_post_date).split('T')[0].split('-').reverse().join('-')
-                                                        : '-'}
+                                                    {formatDate(item.sap_post_date)}
                                                 </span>
                                             ) : (
                                                 <div className="relative flex items-center justify-center w-32 mx-auto">
@@ -702,7 +714,7 @@ const BroilerSupply = () => {
                                                         readOnly
                                                         value={
                                                             (() => {
-                                                                const d = sapPostDates[item.doc_no] || getMaxDateString();
+                                                                const d = sapPostDates[item.doc_no] || getDCDateString(item.date);
                                                                 return d.split('-').reverse().join('-');
                                                             })()
                                                         }
@@ -730,11 +742,11 @@ const BroilerSupply = () => {
                                                     </span>
                                                     <input
                                                         type="date"
-                                                        value={sapPostDates[item.doc_no] || getMaxDateString()}
+                                                        value={sapPostDates[item.doc_no] || getDCDateString(item.date)}
                                                         onChange={(e) => handleSapPostDateChange(item.doc_no, e.target.value)}
                                                         className="absolute inset-0 w-full h-full opacity-0 pointer-events-none"
-                                                        min={getMinAllowedDateForDC(item.date, allowedDays)}
-                                                        max={getMaxAllowedDateForDC()}
+                                                        min={getMinAllowedDateForDC(item.date)}
+                                                        max={getMaxAllowedDateForDC(item.date, allowedDays)}
                                                     />
                                                 </div>
                                             )}
