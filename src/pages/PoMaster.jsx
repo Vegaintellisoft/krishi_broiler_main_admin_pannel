@@ -126,7 +126,7 @@ const POMaster = () => {
 
       const updatedData = data.data.map((item) => {
         const materialNames = item.materials.map(
-          (mat) => `${mat.name} [₹${mat.price}]`
+          (mat) => `${mat.name} [₹${Number(mat.price || 0).toLocaleString('en-IN')}]`
         );
         return {
           ...item,
@@ -560,7 +560,7 @@ const POMaster = () => {
     return `${inWords(rounded)} Rupees Only`;
   };
 
-  // Load Krishi Logo as Base64 for PDF rendering (circular emblem first)
+  // Load Krishi Logo as Base64 for PDF rendering (uses official /assets/krishi.png)
   const loadLogoBase64 = () => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -593,263 +593,354 @@ const POMaster = () => {
           }
         };
         img2.onerror = () => resolve(null);
-        img2.src = '/assets/krishi.png';
+        img2.src = '/krishi-logo.png';
       };
-      img.src = '/krishi-logo.png';
+      img.src = '/assets/krishi.png';
     });
   };
 
-  // Render exact Krishi DC-format Purchase Order Voucher on jsPDF document
-  const renderPoVoucher = (doc, item, logoImg = null, isBulk = false, currentIndex = 1, totalCount = 1) => {
-    const startX = 14;
-    const pageWidth = 210;
-    const contentWidth = 182; // 210 - 28
+  // Helper to format any date string into DD-MM-YYYY format
+  const formatDate = (val) => {
+    if (!val || val === '-' || val === 'null' || val === 'undefined') return '-';
+    const str = String(val).trim();
+    if (/^\d{2}-\d{2}-\d{4}$/.test(str)) return str;
+    const matchYMD = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (matchYMD) return `${matchYMD[3]}-${matchYMD[2]}-${matchYMD[1]}`;
+    const matchDMY = str.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (matchDMY) return `${matchDMY[1]}-${matchDMY[2]}-${matchDMY[3]}`;
+    const d = new Date(val);
+    if (!isNaN(d.getTime())) {
+      const day = String(d.getDate()).padStart(2, '0');
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const year = d.getFullYear();
+      return `${day}-${month}-${year}`;
+    }
+    return str;
+  };
 
-    // ── 1. Subtle Background Watermark ─────────────────────────────────
+  // Render Krishi Purchase Order Document — matches the DC header format
+  const renderPoVoucher = (doc, item, logoImg = null, isBulk = false, currentIndex = 1, totalCount = 1) => {
+    const startX = 12;
+    const pageWidth = 210;
+    const contentWidth = 186; // 210 - 24
+
+    // ── 1. Background Watermark ─────────────────────────────────────────
     try {
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(65);
-      doc.setTextColor(244, 244, 248);
-      doc.text('KRISHI', pageWidth / 2, 140, { align: 'center', angle: 35 });
+      doc.setFontSize(55);
+      doc.setTextColor(244, 244, 246);
+      doc.text('KRISHI', pageWidth / 2, 155, { align: 'center', angle: 35 });
     } catch (e) { /* skip if angle unsupported */ }
 
-    // ── 2. Top Centered Document Title ────────────────────────────────
+    // ── 2. Top Centered Document Title ──────────────────────────────────
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(13);
+    doc.setFontSize(14);
     doc.setTextColor(0, 0, 0);
-    doc.text('DELIVERY CHALLAN', pageWidth / 2, 15, { align: 'center' });
+    doc.text('PURCHASE ORDER', pageWidth / 2, 15, { align: 'center' });
 
-    // ── 3. Header: Left Circular Logo & Right Company Address ─────────
-    const logoX = startX + 1;
-    const logoY = 19;
-    const logoSize = 34; // 34x34mm circular emblem
+    // ── 3. Header: Left Logo & Right Company Address (Exact DC Layout) ──
+    const logoW = 44;
+    const logoH = 19;
+    const logoX = startX + 2;
+    const logoY = 21;
     if (logoImg) {
       try {
-        doc.addImage(logoImg, 'PNG', logoX, logoY, logoSize, logoSize);
+        doc.addImage(logoImg, 'PNG', logoX, logoY, logoW, logoH);
       } catch (e) {
-        console.warn('Could not draw logo in PDF:', e);
+        console.warn('Could not draw logo:', e);
       }
     }
 
-    // Right Company Address
-    const addressX = startX + 78; // x = 92mm
+    // Right Company Address (Purchaser / Buyer)
+    const addressX = startX + 78;
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9.5);
+    doc.setFontSize(8.8);
     doc.setTextColor(0, 0, 0);
     doc.text('KRISHI NUTRITION COMPANY PRIVATE LIMITED', addressX, 23.5);
 
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
+    doc.setFontSize(7.5);
     doc.setTextColor(30, 30, 30);
-    doc.text('Regd. Office : Plot No. KK8, KK9, 3rd Cross Street Road,', addressX, 28);
-    doc.text('Sipcot Industrial Growth Center', addressX, 32.5);
-    doc.text('PERUNDURAI - 638052, Erode, Tamil Nadu', addressX, 37);
-    doc.text('CIN : U15200TZ2013PTC019958', addressX, 41.5);
-    doc.text('GSTIN : 33AAFCK3415K1ZO', addressX, 46);
+    doc.text('Regd. Office : Plot No. KK8, KK9, 3rd Cross Road,', addressX, 27.8);
+    doc.text('Sipcot Industrial Growth Center', addressX, 31.8);
+    doc.text('PERUNDURAI - 638052, Erode, Tamil Nadu', addressX, 35.8);
+    doc.text('CIN : U15200TZ2013PTC019958', addressX, 39.8);
+    doc.text('GSTIN : 33AAFCK3415K1ZO', addressX, 43.8);
 
     if (isBulk) {
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(7.5);
-      doc.setTextColor(100, 100, 100);
-      doc.text(`[ Record ${currentIndex} of ${totalCount} ]`, startX + contentWidth, 53, { align: 'right' });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(7);
+      doc.setTextColor(120, 120, 120);
+      doc.text(`[ ${currentIndex} of ${totalCount} ]`, startX + contentWidth, 47, { align: 'right' });
     }
 
-    // ── 4. Two-Column Framed Info Box ─────────────────────────────────
-    const boxY = 56;
-    const boxHeight = 48;
-    const midX = startX + 96; // 110mm
+    // ── 4. Two-Column PO Details Info Box ────────────────────────────────
+    const infoBoxY = 49;
+    const infoBoxH = 48;
+    const midX = startX + contentWidth / 2;
 
+    // Info box border
     doc.setDrawColor(0, 0, 0);
-    doc.setLineWidth(0.6);
-    doc.rect(startX, boxY, contentWidth, boxHeight);
-    doc.line(midX, boxY, midX, boxY + boxHeight);
+    doc.setLineWidth(0.4);
+    doc.rect(startX, infoBoxY, contentWidth, infoBoxH);
+    // vertical divider
+    doc.line(midX, infoBoxY, midX, infoBoxY + infoBoxH);
 
-    // ── LEFT COLUMN ───────────────────────────────────────────────────
-    const lx = startX + 3.5;
-    doc.setFontSize(8);
-    doc.setTextColor(0, 0, 0);
+    // Status colour helper
+    const statusText = getStatusText(item.status);
+    const statusColour = item.status === 3 ? [34, 139, 34]   // Active — green
+      : item.status === 4 ? [180, 0, 0]                       // Closed — red
+      : item.status === 2 ? [30, 100, 200]                    // In-Transit — blue
+      : [160, 120, 0];                                         // Pending — amber
 
-    // Dispatch From
-    doc.setFont('helvetica', 'bold');
-    doc.text('Dispatch From', lx, boxY + 5.5);
-    doc.setFont('helvetica', 'normal');
-    doc.text('Krishi Nutrition Company Private Limited', lx, boxY + 9.8);
-    doc.text('C/o Railway Goodshed', lx, boxY + 13.8);
-    doc.text('Erode, Tamil Nadu - 638002', lx, boxY + 17.8);
-    doc.text('GSTIN : 33AAFCK3415K1ZO', lx, boxY + 21.8);
+    // Generated date (DD-MM-YYYY)
+    const today = new Date();
+    const generatedDate = `${String(today.getDate()).padStart(2, '0')}-${String(today.getMonth() + 1).padStart(2, '0')}-${today.getFullYear()}`;
 
-    // Billed / Ship to
-    doc.setFont('helvetica', 'bold');
-    doc.text('Billed / Ship to', lx, boxY + 27.5);
-    doc.setFont('helvetica', 'normal');
-
-    const leftColWidth = midX - startX - 7;
-    const shipName = String(item.supplier_name || 'KRISHI NUTRITION COMPANY PRIVATE LIMITED');
-    const shipLines = doc.splitTextToSize(shipName, leftColWidth);
-    doc.text(shipLines[0] || '', lx, boxY + 31.8);
-
-    if (item.supplier_address) {
-      const addrLines = doc.splitTextToSize(String(item.supplier_address), leftColWidth);
-      doc.text(addrLines[0] || 'DOOR NO: 5/3/2, PACHAL VILLAGE PUDUCHATRAM POST,', lx, boxY + 35.8);
-      doc.text(addrLines[1] || 'NAMAKKAL, Tamil Nadu - 637018', lx, boxY + 39.8);
-    } else {
-      doc.text('DOOR NO: 5/3/2, PACHAL VILLAGE PUDUCHATRAM POST,', lx, boxY + 35.8);
-      doc.text('NAMAKKAL, Tamil Nadu - 637018', lx, boxY + 39.8);
-    }
-    doc.text('GSTIN : ' + String(item.supplier_gstin || '33AAFCK3415K1ZO'), lx, boxY + 43.8);
-
-    // ── RIGHT COLUMN (5 rows, evenly spaced without Truck No) ──────────
-    const rKeyX = midX + 4;
-    const rValX = midX + 30;
-
-    const rightRows = [
-      { label: 'Doc No.',      value: String(item.po_no || ('DC/6/EGE/' + String(item.id || '00486'))) },
-      { label: 'Date',         value: String(item.supplier_invoice_date || item.po_date || item.rr_date || new Date().toLocaleDateString('en-GB')) },
-      { label: 'RR No',        value: String(item.rr_no || '-') },
-      { label: 'Ref Po.',      value: String(item.po_no || '-') },
-      { label: 'Ref Bill No.', value: String(item.bill_no || '-') },
+    // Left column rows
+    const leftInfoRows = [
+      { label: 'PO Number:',        value: String(item.po_no || '-'),                    bold: true },
+      { label: 'PO Date:',          value: formatDate(item.po_date) },
+      { label: 'Supplier Name:',    value: String(item.supplier_name || '-'),            bold: true },
+      { label: 'Supplier Inv No:',  value: String(item.bill_no || '-') },
+      { label: 'Supplier Inv Date:', value: formatDate(item.supplier_invoice_date) },
     ];
 
-    doc.setFontSize(8);
-    rightRows.forEach((row, i) => {
-      const ry = boxY + 7.5 + i * 8.2;
+    // Right column rows
+    const rightInfoRows = [
+      { label: 'RR Number:',       value: String(item.rr_no || '-') },
+      { label: 'RR Date:',         value: formatDate(item.rr_date) },
+      { label: 'Status:',          value: statusText,      coloured: true },
+      { label: 'Generated Date:',  value: generatedDate },
+    ];
+
+    const lInfoX = startX + 4;
+    const lValX  = startX + 38;
+    const rInfoX = midX + 4;
+    const rValX  = midX + 34;
+    const infoFontSz = 8;
+    const infoLineH  = 8;
+
+    leftInfoRows.forEach((row, i) => {
+      const y = infoBoxY + 7 + i * infoLineH;
       doc.setFont('helvetica', 'bold');
-      doc.setTextColor(0, 0, 0);
-      doc.text(row.label, rKeyX, ry);
-      doc.setFont('helvetica', 'normal');
-      doc.setTextColor(20, 20, 20);
-      doc.text(String(row.value), rValX, ry);
+      doc.setFontSize(infoFontSz);
+      doc.setTextColor(70, 90, 120);
+      doc.text(row.label, lInfoX, y);
+      doc.setFont('helvetica', row.bold ? 'bold' : 'normal');
+      doc.setTextColor(15, 15, 15);
+      doc.text(String(row.value), lValX, y);
     });
 
-    // ── 5. Red Asterisk Label: "* Amount in INR" ──────────────────────
-    const labelY = boxY + boxHeight + 5;
-    doc.setFontSize(8);
+    rightInfoRows.forEach((row, i) => {
+      const y = infoBoxY + 7 + i * infoLineH;
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(infoFontSz);
+      doc.setTextColor(70, 90, 120);
+      doc.text(row.label, rInfoX, y);
+      if (row.coloured) {
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(...statusColour);
+      } else {
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(15, 15, 15);
+      }
+      doc.text(String(row.value), rValX, y);
+    });
+
+    // ── 5. "MATERIALS & PRICING BREAKDOWN" section heading ───────────────
+    const matHeadY = infoBoxY + infoBoxH + 6;
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(220, 0, 0);
-    doc.text('*', pageWidth / 2 - 13, labelY);
-    doc.setTextColor(0, 0, 0);
-    doc.text(' Amount in INR', pageWidth / 2 - 11, labelY);
+    doc.setFontSize(8.5);
+    doc.setTextColor(10, 10, 10);
+    doc.text('MATERIALS & PRICING BREAKDOWN', startX, matHeadY);
 
-    // ── 6. Materials Table (10 Columns) ───────────────────────────────
+    // ── 7. Materials Table ────────────────────────────────────────────────
+    const materials = [];
+    if (Array.isArray(item.materials)) {
+      materials.push(...item.materials);
+    } else if (typeof item.materials === 'string') {
+      try {
+        const parsed = JSON.parse(item.materials);
+        if (Array.isArray(parsed)) materials.push(...parsed);
+        else if (parsed) materials.push(parsed);
+      } catch (e) { /* ignore */ }
+    }
+
+    let totalBagsSum  = 0;
+    let totalQtySum   = 0;
+    let grandTotalSum = 0;
+
     const tableRows = [];
-    const materials = Array.isArray(item.materials) ? item.materials : [];
 
-    materials.forEach(mat => {
-      const qty = Number(mat.quantity) || 0;
-      const rate = Number(mat.price) || 0;
-      const bags = Number(mat.noOfBags) || 0;
+    materials.forEach((mat, idx) => {
+      const qty   = Number(mat.quantity)  || 0;
+      const rate  = Number(mat.price)     || 0;
+      const bags  = Number(mat.noOfBags)  || 0;
+      const unit  = mat.unit_name || mat.unit || 'Mt';
       const total = qty * rate;
-      const qtyMts = qty >= 1000 ? (qty / 1000).toFixed(3) : (qty > 0 ? qty.toFixed(3) : '-');
+
+      totalBagsSum  += bags;
+      totalQtySum   += qty;
+      grandTotalSum += total;
+
+      const bagsStr  = bags > 0 ? bags.toLocaleString('en-IN') : '-';
+      const qtyStr   = qty  > 0 ? qty.toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : '-';
+      const rateStr  = rate > 0 ? rate.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+      const totalStr = total > 0 ? total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
 
       tableRows.push([
+        String(idx + 1),
         String(mat.name || 'MAIZE').toUpperCase(),
-        '10059000',
-        bags > 0 ? String(bags) : '-',
-        qtyMts,
-        rate > 0 ? String(rate) : '-',
-        total > 0 ? String(Math.round(total)) : '-',
-        '0',
-        '0',
-        '0.00',
-        total > 0 ? String(Math.round(total)) : '-'
+        bagsStr,
+        qtyStr,
+        String(unit),
+        rateStr,
+        totalStr
       ]);
     });
 
-    if (tableRows.length === 0 && item.material_view) {
+    if (tableRows.length === 0) {
       tableRows.push([
-        String(item.material_view).toUpperCase(),
-        '10059000',
-        '-',
-        '-',
-        '-',
-        '-',
-        '0',
-        '0',
-        '0.00',
-        '-'
+        '1',
+        String(item.material_view || 'MAIZE').toUpperCase(),
+        '-', '-', 'Mt', '-', '-'
       ]);
     }
 
+    const grandTotalStr  = grandTotalSum > 0 ? grandTotalSum.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '-';
+    const totalBagsStr   = totalBagsSum  > 0 ? totalBagsSum.toLocaleString('en-IN') : '-';
+    const totalQtyStr    = totalQtySum   > 0 ? totalQtySum.toLocaleString('en-IN', { minimumFractionDigits: 3, maximumFractionDigits: 3 }) : '-';
+
     autoTable(doc, {
-      startY: labelY + 2,
+      startY: matHeadY + 3,
       margin: { left: startX, right: startX },
       head: [[
-        'Material',
-        'HSN\nCode',
-        'No of\nBag',
-        'Qty\n(MTS)',
-        'Rate (Inc of\nTax)',
-        'Basic',
-        'CGST\n2.5%',
-        'SGST\n2.5%',
-        'Round\nOff',
-        'Total'
+        'S.NO',
+        'MATERIAL DESCRIPTION',
+        'BAGS',
+        'QUANTITY',
+        'UNIT',
+        'RATE (Rs.)',
+        'TOTAL AMOUNT (Rs.)'
       ]],
       body: tableRows,
+      foot: [[
+        { content: 'GRAND TOTAL', colSpan: 2, styles: { halign: 'center', fontStyle: 'bold', textColor: [10, 10, 10] } },
+        { content: totalBagsStr,  styles: { halign: 'center', fontStyle: 'bold' } },
+        { content: totalQtyStr,   styles: { halign: 'center', fontStyle: 'bold' } },
+        { content: '-',           styles: { halign: 'center', fontStyle: 'bold' } },
+        { content: '-',           styles: { halign: 'center', fontStyle: 'bold' } },
+        { content: grandTotalStr, styles: { halign: 'right',  fontStyle: 'bold', textColor: [10, 10, 10] } }
+      ]],
       theme: 'grid',
       styles: {
-        lineWidth: 0.35,
-        lineColor: [0, 0, 0],
-        textColor: [0, 0, 0],
-        valign: 'middle'
+        lineWidth: 0.3,
+        lineColor: [180, 180, 180],
+        textColor: [20, 20, 20],
+        valign: 'middle',
+        cellPadding: 2,
+        fontSize: 7.5,
+        overflow: 'linebreak'
       },
       headStyles: {
-        fillColor: [255, 255, 255],
-        textColor: [0, 0, 0],
-        fontStyle: 'bold',
-        fontSize: 7.5,
-        halign: 'center',
-        valign: 'middle',
-        lineWidth: 0.35,
-        lineColor: [0, 0, 0]
+        fillColor:  [20, 24, 40],
+        textColor:  [255, 255, 255],
+        fontStyle:  'bold',
+        fontSize:   7.5,
+        halign:     'center',
+        valign:     'middle',
+        lineWidth:  0.3,
+        lineColor:  [20, 24, 40],
+        cellPadding: 2
+      },
+      footStyles: {
+        fillColor:  [235, 235, 235],
+        textColor:  [10, 10, 10],
+        fontStyle:  'bold',
+        fontSize:   7.5,
+        valign:     'middle',
+        lineWidth:  0.3,
+        lineColor:  [180, 180, 180],
+        cellPadding: 2
       },
       bodyStyles: {
-        fontSize: 7.5,
-        textColor: [0, 0, 0],
-        halign: 'center',
-        valign: 'middle',
-        lineWidth: 0.35,
-        lineColor: [0, 0, 0]
+        fontSize:  7.5,
+        textColor: [20, 20, 20],
+        halign:    'center',
+        valign:    'middle',
+        lineWidth: 0.3,
+        lineColor: [200, 200, 200],
+        cellPadding: 2
+      },
+      alternateRowStyles: {
+        fillColor: [250, 250, 252]
       },
       columnStyles: {
-        0: { halign: 'center', cellWidth: 22 },
-        1: { halign: 'center', cellWidth: 18 },
-        2: { halign: 'center', cellWidth: 16 },
-        3: { halign: 'center', cellWidth: 18 },
-        4: { halign: 'center', cellWidth: 24 },
-        5: { halign: 'center', cellWidth: 20 },
-        6: { halign: 'center', cellWidth: 16 },
-        7: { halign: 'center', cellWidth: 16 },
-        8: { halign: 'center', cellWidth: 16 },
-        9: { halign: 'center', cellWidth: 16 }
+        0: { halign: 'center', cellWidth: 12 },
+        1: { halign: 'left',   cellWidth: 54 },
+        2: { halign: 'center', cellWidth: 20 },
+        3: { halign: 'center', cellWidth: 24 },
+        4: { halign: 'center', cellWidth: 16 },
+        5: { halign: 'right',  cellWidth: 26 },
+        6: { halign: 'right',  cellWidth: 34 }
       }
     });
 
-    const finalTableY = doc.lastAutoTable ? doc.lastAutoTable.finalY : labelY + 25;
+    const finalTableY = doc.lastAutoTable ? doc.lastAutoTable.finalY : matHeadY + 40;
 
-    // ── 7. Exemption Paragraph ─────────────────────────────────────────
-    const exY = finalTableY + 7;
-    doc.setFontSize(7.2);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(0, 0, 0);
-    const exText = 'Exemption from generation of E-Way Bill: Rule 138(14)(e) of Central Goods and Service Tax Rules, 2017 exempts from the requirement of E-Way Bill generation for Goods except De-oiled cake specified in theSchedule appended to Notification No. 2/2017 Central Tax (Rate) dt.28.06.17. Goods included in this Delivery Challan (ST) are exempt as per the said Notification and hence E-Way Bill is not generated';
-
-    const splitEx = doc.splitTextToSize(exText, contentWidth - 4);
-    doc.text(splitEx, pageWidth / 2, exY, { align: 'center', lineHeightFactor: 1.3 });
-
-    // ── 8. System Generated Dotted / Dashed Box ────────────────────────
-    const exHeight = splitEx.length * 3.6;
-    const box2Y = exY + exHeight + 5;
-    doc.setDrawColor(100, 100, 100);
-    doc.setLineWidth(0.4);
-    doc.setLineDashPattern([2, 2], 0);
-    doc.rect(startX, box2Y, contentWidth, 8);
-    doc.setLineDashPattern([], 0); // reset dash
+    // ── 7. Amount in Words Box ────────────────────────────────────────────
+    const wordsY = finalTableY + 5;
+    doc.setDrawColor(200, 200, 200);
+    doc.setFillColor(252, 252, 252);
+    doc.setLineWidth(0.3);
+    doc.rect(startX, wordsY, contentWidth, 10, 'FD');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8);
-    doc.setTextColor(0, 0, 0);
+    doc.setTextColor(10, 10, 10);
+    doc.text('Amount in Words:', startX + 4, wordsY + 6.5);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    const words = numberToWords(grandTotalSum);
+    doc.text(words, startX + 38, wordsY + 6.5);
+
+    // ── 8. Signature Section ──────────────────────────────────────────────
+    const sigY = wordsY + 20;
+
+    // Left dashed signature line
+    doc.setDrawColor(100, 100, 100);
+    doc.setLineWidth(0.3);
+    doc.setLineDashPattern([1.5, 1.5], 0);
+    doc.line(startX + 4, sigY, startX + 66, sigY);
+
+    // Right dashed signature line
+    doc.line(startX + contentWidth - 66, sigY, startX + contentWidth - 4, sigY);
+    doc.setLineDashPattern([], 0);
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(20, 20, 20);
+    doc.text('Prepared / Verified By', startX + 35, sigY + 5, { align: 'center' });
+    doc.text('Authorized Signatory',   startX + contentWidth - 35, sigY + 5, { align: 'center' });
+
+    // ── 9. Footer Note ───────────────────────────────────────────────────
+    const footNoteY = sigY + 14;
+    doc.setDrawColor(210, 210, 210);
+    doc.setFillColor(248, 248, 250);
+    doc.setLineWidth(0.2);
+    doc.rect(startX, footNoteY, contentWidth, 8, 'FD');
+
+    doc.setFont('helvetica', 'italic');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 100, 100);
+    doc.text(
+      'This is a computer generated Purchase Order document and does not require a physical signature.',
+      pageWidth / 2, footNoteY + 5, { align: 'center' }
+    );
   };
+
 
   // Download Single PO as PDF Voucher
   const downloadSinglePoPdf = async (item) => {
@@ -1443,9 +1534,9 @@ const POMaster = () => {
                           <tr key={mat.id}>
                             <td className="p-2 text-center">{idx + 1}</td>
                             <td className="p-2 text-center">{mat.name}</td>
-                            <td className="p-2 text-center">{mat.price}</td>
-                            <td className="p-2 text-center">{mat.quantity} {mat.unit_name}</td>
-                            <td className="p-2 text-center">{mat.noOfBags}</td>
+                            <td className="p-2 text-center">₹{Number(mat.price || 0).toLocaleString('en-IN')}</td>
+                            <td className="p-2 text-center">{Number(mat.quantity || 0).toLocaleString('en-IN')} {mat.unit_name}</td>
+                            <td className="p-2 text-center">{Number(mat.noOfBags || 0).toLocaleString('en-IN')}</td>
                             <td className="p-2 text-center">
                               <button
                                 onClick={() => handleDeleteMaterial(mat.id)}
@@ -1598,7 +1689,7 @@ const POMaster = () => {
                   <td className="p-4 text-sm opacity-65">{item.po_no}</td>
                   <td className="p-4 text-sm w-[20%] opacity-65">{item.supplier_name}</td>
                   <td className="p-4 text-sm opacity-65">{item.bill_no}</td>
-                  <td className="p-4 text-sm opacity-65">{item.supplier_invoice_date || '-'}</td>
+                  <td className="p-4 text-sm opacity-65">{formatDate(item.supplier_invoice_date)}</td>
                   <td className="p-4 text-sm opacity-65">{item.rr_no}</td>
 
                   <td className="p-4 text-sm opacity-65">

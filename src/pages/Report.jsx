@@ -45,7 +45,24 @@ const COLUMNS = [
 ];
 
 // Numeric columns for totals row
-const TOTAL_COLS = new Set(['no_of_bags', 'quantity', 'taxable_value', 'cgst', 'sgst', 'gross']);
+// Helper to format any date string into DD-MM-YYYY format
+const formatDate = (val) => {
+  if (!val || val === '-' || val === 'null' || val === 'undefined') return '-';
+  const str = String(val).trim();
+  if (/^\d{2}-\d{2}-\d{4}$/.test(str)) return str;
+  const matchYMD = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (matchYMD) return `${matchYMD[3]}-${matchYMD[2]}-${matchYMD[1]}`;
+  const matchDMY = str.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (matchDMY) return `${matchDMY[1]}-${matchDMY[2]}-${matchDMY[3]}`;
+  const d = new Date(val);
+  if (!isNaN(d.getTime())) {
+    const day = String(d.getDate()).padStart(2, '0');
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const year = d.getFullYear();
+    return `${day}-${month}-${year}`;
+  }
+  return str;
+};
 
 export default function Report() {
   const [isTableLoading, setIsTableLoading] = useState(true);
@@ -151,6 +168,9 @@ export default function Report() {
       ...filteredData.map((item, idx) =>
         COLUMNS.map(c => {
           if (c.key === 'row_index') return idx + 1;
+          if (['po_date', 'rr_date', 'supplier_inv_date', 'doc_date', 'ewb_date'].includes(c.key)) {
+            return formatDate(item[c.key]);
+          }
           return item[c.key] ?? '-';
         })
       ),
@@ -234,6 +254,9 @@ export default function Report() {
   const renderCell = (col, item) => {
     const val = item[col.key];
     if (col.key === 'dc_status' || col.key === 'ewb_status') return statusBadge(val);
+    if (['po_date', 'rr_date', 'supplier_inv_date', 'doc_date', 'ewb_date'].includes(col.key)) {
+      return <span>{formatDate(val)}</span>;
+    }
     if (['taxable_value', 'cgst', 'sgst', 'gross', 'item_rate', 'rate_incl_tax'].includes(col.key)) {
       const num = parseFloat(val);
       if (!isNaN(num) && num > 0) return <span className="font-mono tabular-nums">₹{Number(val).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>;
