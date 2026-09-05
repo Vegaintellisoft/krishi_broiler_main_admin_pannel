@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { IoCloseSharp } from 'react-icons/io5';
 import Swal from 'sweetalert2';
+import { toDateInputString } from '../../../../utils/helper';
 
 export default function SupplyModal({ isOpen, closeModal, refreshData, editData }) {
     if (!isOpen) return null;
@@ -8,7 +9,7 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
     // --- Initial States ---
     const initialFormState = {
         // Header Details
-        date: new Date().toISOString().split('T')[0], // 1. Automatic
+        date: toDateInputString(),                     // 1. Automatic
         customerType: '',                             // 2. Manual (C/F)
         dcNo: '',                                     // 3. Manual
         customer: '',                                 // 4. Manual
@@ -26,7 +27,7 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
         batch: '',                                    // 14. Automatic
         age: '',                                      // 15. Automatic
         birdStock: '',                                // 16. Automatic
-        
+
         // Calculations
         excess: '0',                                  // 17. Automatic
         shortage: '0',                                // 18. Automatic
@@ -47,8 +48,8 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
     // --- Mock Database for Auto-Populate ---
     const farmerDB = {
         "FARM-001": { name: "FARM-001 | Krishnan", line: "L-1", shed: "S-1", batch: "B-2025-01", age: 42, stock: 5000 },
-        "FARM-002": { name: "FARM-002 | Balaji",   line: "L-2", shed: "S-3", batch: "B-2025-05", age: 38, stock: 4500 },
-        "FARM-003": { name: "FARM-003 | Kumar",    line: "L-1", shed: "S-2", batch: "B-2025-08", age: 40, stock: 6000 },
+        "FARM-002": { name: "FARM-002 | Balaji", line: "L-2", shed: "S-3", batch: "B-2025-05", age: 38, stock: 4500 },
+        "FARM-003": { name: "FARM-003 | Kumar", line: "L-1", shed: "S-2", batch: "B-2025-08", age: 40, stock: 6000 },
     };
 
     // --- Effects ---
@@ -74,7 +75,7 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
 
             // Weight Calc
             const netWeight = Math.max(0, loadWt - emptyWt);
-            
+
             // Avg Weight
             const avgWt = qty > 0 ? (netWeight / qty).toFixed(2) : 0;
 
@@ -87,7 +88,7 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
             // Excess / Shortage
             let excessVal = 0;
             let shortageVal = 0;
-            
+
             // Simple logic: normally shortage calculated after final batch closure, 
             // but here we might show difference for this load if stock is tracking per load (unlikely)
             // or just leaving 0 for now. 
@@ -95,9 +96,9 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
             // if (qty > stock) excessVal = qty - stock;
             // else shortageVal = stock - qty; 
             // *Assuming standard logic: manual entry might override, but let's calc simple diff*
-            
+
             // NOTE: Usually stock decrements. Here we just display static diff for demo unless specific formula given.
-            
+
             setFormData(prev => ({
                 ...prev,
                 weight: netWeight,
@@ -108,7 +109,7 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
                 // shortage: shortageVal
             }));
         };
-        
+
         calculateValues();
     }, [formData.birdQty, formData.emptyWeight, formData.loadWeight, formData.rate, formData.tcs, formData.birdStock]);
 
@@ -149,12 +150,12 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
         // Simulate API
         setTimeout(() => {
             console.log("Submitted Data:", formData);
-            Swal.fire({ 
-                icon: "success", 
-                title: editData ? "Updated!" : "Saved!", 
-                text: "Broiler Supply details saved successfully.", 
-                timer: 1500, 
-                showConfirmButton: false 
+            Swal.fire({
+                icon: "success",
+                title: editData ? "Updated!" : "Saved!",
+                text: "Broiler Supply details saved successfully.",
+                timer: 1500,
+                showConfirmButton: false
             });
             refreshData();
             closeModal();
@@ -165,7 +166,7 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
     return (
         <div className="fixed inset-0 bg-black bg-opacity-40 flex justify-center items-center z-50 backdrop-blur-sm">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-6xl mx-4 overflow-hidden font-poppins h-[90vh] flex flex-col">
-                
+
                 {/* Header */}
                 <div className="flex justify-between items-center p-5 border-b bg-gray-50">
                     <h2 className="text-lg font-bold text-gray-800">{editData ? "Edit Supply Entry" : "Add Broiler Supply"}</h2>
@@ -177,7 +178,7 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
                 {/* Scrollable Form Area */}
                 <div className="flex-1 overflow-y-auto p-6">
                     <form id="supplyForm" onSubmit={handleSubmit}>
-                        
+
                         {/* --- SECTION 1: INVOICE / HEADER DETAILS --- */}
                         <div className="mb-8">
                             <h3 className="text-md font-semibold text-orange-600 border-b pb-2 mb-4">Invoice Details</h3>
@@ -277,7 +278,7 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
                         <div>
                             <h3 className="text-md font-semibold text-orange-600 border-b pb-2 mb-4">Weight & Billing</h3>
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                                
+
                                 {/* Row 1: Quantity & Weights */}
                                 <div>
                                     <label className="block text-xs font-bold text-gray-700 mb-1">Bird Qty <span className="text-red-500">*</span></label>
@@ -314,7 +315,7 @@ export default function SupplyModal({ isOpen, closeModal, refreshData, editData 
                                     <input type="number" name="tcs" value={formData.tcs} onChange={handleInputChange} className="w-full p-2.5 bg-white border rounded text-sm focus:ring-2 focus:ring-orange-500 outline-none" placeholder="₹" />
                                 </div>
                             </div>
-                            
+
                             {/* Final Total Row */}
                             <div className="mt-6 flex justify-end items-center bg-gray-100 p-4 rounded-lg">
                                 <span className="text-lg font-bold text-gray-700 mr-4">Total Bill Value:</span>

@@ -10,7 +10,7 @@ import SupplyModal from './SupplyModal'
 import BillOfSupplyEditModal from './BillOfSupplyEditModal'
 import { useAuth } from '../../../../auth/AuthContext'
 import ExcelExport from '../../../../utils/ExcelExport'
-import { formatDate } from '../../../../utils/helper'
+import { formatDate, toDateInputString } from '../../../../utils/helper'
 
 const BroilerSupply = () => {
     // --- Permissions ---
@@ -45,55 +45,34 @@ const BroilerSupply = () => {
     const getMinDateString = (days) => {
         const d = new Date();
         d.setDate(d.getDate() - days);
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return `${y}-${m}-${day}`;
+        return toDateInputString(d);
     };
 
     const getMaxDateString = () => {
-        const d = new Date();
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return `${y}-${m}-${day}`;
+        return toDateInputString(new Date());
     };
 
     // Min allowed SAP post date = the bill (DC) date itself
     const getMinAllowedDateForDC = (dcDateStr) => {
         if (!dcDateStr) return getMaxDateString();
-        const d = new Date(dcDateStr);
-        if (isNaN(d.getTime())) return getMaxDateString();
-        d.setHours(0, 0, 0, 0);
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return `${y}-${m}-${day}`;
+        return toDateInputString(dcDateStr);
     };
 
     // Max allowed SAP post date = bill_date + allowedDays
     const getMaxAllowedDateForDC = (dcDateStr, days) => {
         if (!dcDateStr) return getMaxDateString();
-        const d = new Date(dcDateStr);
-        if (isNaN(d.getTime())) return getMaxDateString();
-        d.setHours(0, 0, 0, 0);
+        const ymd = toDateInputString(dcDateStr);
+        if (!ymd) return getMaxDateString();
+        const parts = ymd.split('-');
+        const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
         d.setDate(d.getDate() + Number(days || 5));
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return `${y}-${m}-${day}`;
+        return toDateInputString(d);
     };
 
     // Returns the DC/bill date as YYYY-MM-DD string
     const getDCDateString = (dcDateStr) => {
         if (!dcDateStr) return getMaxDateString();
-        const d = new Date(dcDateStr);
-        if (isNaN(d.getTime())) return getMaxDateString();
-        d.setHours(0, 0, 0, 0);
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return `${y}-${m}-${day}`;
+        return toDateInputString(dcDateStr);
     };
 
     // --- Fetch Data ---
@@ -395,8 +374,8 @@ const BroilerSupply = () => {
             }, { params: { doc_no: item.doc_no } });
 
             // Step 2: Submit to SAP (with admin-selected SAP Post Date and Rate)
-            const res = await axios.post("broiler/bill-of-supply/submit", { 
-                doc_no: item.doc_no, 
+            const res = await axios.post("broiler/bill-of-supply/submit", {
+                doc_no: item.doc_no,
                 sap_post_date: sapPostDate,
                 rate: Number(newRate)
             });
