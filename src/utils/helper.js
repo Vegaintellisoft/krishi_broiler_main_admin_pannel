@@ -30,7 +30,7 @@ export const formatDateTime = (dateString) => {
 
         const formatter = new Intl.DateTimeFormat('en-GB', options);
         const parts = formatter.formatToParts(date);
-        
+
         let day = '', month = '', year = '', hour = '', minute = '', dayPeriod = '';
         for (const p of parts) {
             if (p.type === 'day') day = p.value;
@@ -50,6 +50,20 @@ export const formatDateTime = (dateString) => {
 export const formatDate = (dateString) => {
     if (!dateString) return '-';
     try {
+        if (typeof dateString === 'string') {
+            const s = dateString.trim();
+            // If already YYYY-MM-DD, direct format to DD-MM-YYYY
+            const ymdMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+            if (ymdMatch) {
+                return `${ymdMatch[3]}-${ymdMatch[2]}-${ymdMatch[1]}`;
+            }
+            // If already DD-MM-YYYY
+            const dmyMatch = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+            if (dmyMatch) {
+                return s;
+            }
+        }
+
         const date = new Date(dateString);
         if (isNaN(date.getTime())) return String(dateString);
 
@@ -62,7 +76,7 @@ export const formatDate = (dateString) => {
 
         const formatter = new Intl.DateTimeFormat('en-GB', options);
         const parts = formatter.formatToParts(date);
-        
+
         let day = '', month = '', year = '';
         for (const p of parts) {
             if (p.type === 'day') day = p.value;
@@ -73,5 +87,40 @@ export const formatDate = (dateString) => {
         return `${day}-${month}-${year}`;
     } catch (_) {
         return String(dateString);
+    }
+};
+
+/**
+ * Safely converts any date object or date string into YYYY-MM-DD string
+ * in Asia/Kolkata timezone for <input type="date" /> fields.
+ */
+export const toDateInputString = (input) => {
+    if (!input) {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        const d = String(now.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+    }
+    if (typeof input === 'string') {
+        const s = input.trim();
+        // If YYYY-MM-DD
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        // If DD-MM-YYYY
+        const dmyMatch = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+        if (dmyMatch) return `${dmyMatch[3]}-${dmyMatch[2]}-${dmyMatch[1]}`;
+    }
+    try {
+        const date = new Date(input);
+        if (isNaN(date.getTime())) return '';
+        const formatter = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Asia/Kolkata',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        });
+        return formatter.format(date); // en-CA outputs YYYY-MM-DD
+    } catch (_) {
+        return '';
     }
 };
