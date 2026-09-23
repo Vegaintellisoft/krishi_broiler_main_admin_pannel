@@ -18,11 +18,20 @@ import SearchableSelect, { SELECT_ALL_VALUE } from '../components/SearchableSele
 
 const POMaster = () => {
 
-  const { getPermissions } = useAuth();
-  const { purchaseOrder } = getPermissions() || {};
+  const { getPermissions, user } = useAuth();
+  const permissions = getPermissions() || {};
+  const { purchaseOrder, adminPage } = permissions;
+  const isAdmin = Boolean(
+    adminPage?.showAllCategories === true ||
+    adminPage?.show === true ||
+    user?.role?.toLowerCase() === 'admin' ||
+    user?.role?.toLowerCase() === 'superadmin'
+  );
 
   const [data, setData] = useState([]);
   const [modalIsOpen, setIsOpen] = useState(false);
+  const [editingPoItem, setEditingPoItem] = useState(null);
+  const [showAddMaterialForm, setShowAddMaterialForm] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [isSubmitLoading, setIsSubmitLoading] = useState(false)
 
@@ -145,9 +154,18 @@ const POMaster = () => {
   }
 
   const handleEdit = async (item) => {
-
     try {
+      const hasDC = Number(item.dc_count || 0) > 0;
+      if (hasDC && !isAdmin) {
+        Swal.fire({
+          icon: "warning",
+          title: "Action Restricted",
+          text: "Delivery Challan has already been generated based on this PO. Only Admin can edit this PO.",
+        });
+        return;
+      }
 
+      setEditingPoItem(item);
       setFormData({
         po_no: item.po_no || "",
         supplier_id: item.supplier__id || "",
@@ -160,25 +178,67 @@ const POMaster = () => {
         supplier_invoice_date: item.supplier_invoice_date || ""
       });
 
-      setUpdatePoId(item.id)
+      setUpdatePoId(item.id);
 
-      setMaterialList(item.materials);
+      let parsedMats = [];
+      if (Array.isArray(item.materials)) {
+        parsedMats = item.materials;
+      } else if (typeof item.materials === 'string') {
+        try {
+          parsedMats = JSON.parse(item.materials);
+        } catch (e) {
+          parsedMats = [];
+        }
+      }
 
-      // await fetchDropdownData(item.rr_no);
+      const normalizedMats = parsedMats.map((mat, idx) => ({
+        ...mat,
+        id: mat.id ?? (idx + 1),
+        name: mat.name || `Material ${idx + 1}`,
+        price: mat.price !== undefined ? mat.price : 0,
+        quantity: mat.quantity !== undefined && mat.quantity !== null ? mat.quantity : '',
+        noOfBags: mat.noOfBags !== undefined && mat.noOfBags !== null ? mat.noOfBags : '',
+        unit_name: mat.unit_name || mat.unit || '',
+        unit_id: mat.unit_id || null,
+        mat_id: mat.mat_id || mat.material_id || null
+      }));
 
+      setMaterialList(normalizedMats);
+      setShowAddMaterialForm(false);
       setIsOpen(true);
 
     } catch (error) {
-      console.log("server error: ", error)
-    } finally {
-      // setLoadingId(null)
+      console.log("server error: ", error);
     }
   };
 
+  const handleMaterialChange = (index, field, value) => {
+    setMaterialList((prev) => {
+      const updated = [...prev];
+      updated[index] = {
+        ...updated[index],
+        [field]: value
+      };
+      return updated;
+    });
+  };
 
-  const handleDelete = async (id) => {
+  const handleDelete = async (id, item) => {
+    const hasDC = Number(item?.dc_count || 0) > 0;
+    if (hasDC && !isAdmin) {
+      Swal.fire({
+        icon: "warning",
+        title: "Action Restricted",
+        text: "Delivery Challan has already been generated based on this PO. Only Admin can delete this PO.",
+      });
+      return;
+    }
+
     Swal.fire({
       title: "Are you sure?",
+      text: hasDC
+        ? "Warning: A Delivery Challan is already generated based on this PO. Are you sure you want to delete it?"
+        : "You will not be able to revert this!",
       icon: "warning",
       showCancelButton: true,
       confirmButtonColor: "#d33",
@@ -193,15 +253,26 @@ const POMaster = () => {
               toast: true,
               position: "top-end",
               icon: "success",
-              title: "Successfullly deleted.",
+              title: "Successfully deleted.",
               showConfirmButton: false,
               timer: 3000
             });
 
             fetchPOMaster();
+          } else {
+            Swal.fire({
+              icon: "error",
+              title: "Error",
+              text: data.message || "Failed to delete PO"
+            });
           }
         } catch (err) {
           console.log("Error deleting data:", err);
+          Swal.fire({
+            icon: "error",
+            title: "Error",
+            text: err.response?.data?.message || "Failed to delete PO"
+          });
         }
       }
     });
@@ -276,14 +347,67 @@ const POMaster = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    setIsSubmitLoading(true)
+    setIsSubmitLoading(true);
+
+    if (!materialList || materialList.length === 0) {
+      Swal.fire({
+        toast: true,
+        position: "top-end",
+        icon: "error",
+        title: "At least one material is required",
+        showConfirmButton: false,
+        timer: 2000
+      });
+      setIsSubmitLoading(false);
+      return;
+    }
+
+    const hasInvalidQty = materialList.some(
+      (m) => m.quantity === '' || isNaN(Number(m.quantity)) || Number(m.quantity) <= 0
+    );
+    if (hasInvalidQty) {
+      Swal.fire({
+        toast: true,
+        position: "top-end",
+        icon: "error",
+        title: "Please enter a valid quantity (> 0) for all materials",
+        showConfirmButton: false,
+        timer: 2500
+      });
+      setIsSubmitLoading(false);
+      return;
+    }
+
+    const hasInvalidBags = materialList.some(
+      (m) => m.noOfBags === '' || isNaN(Number(m.noOfBags)) || Number(m.noOfBags) < 0
+    );
+    if (hasInvalidBags) {
+      Swal.fire({
+        toast: true,
+        position: "top-end",
+        icon: "error",
+        title: "Please enter a valid number of bags (>= 0) for all materials",
+        showConfirmButton: false,
+        timer: 2500
+      });
+      setIsSubmitLoading(false);
+      return;
+    }
+
+    const formattedMaterials = materialList.map((mat, idx) => ({
+      ...mat,
+      id: mat.id ?? (idx + 1),
+      quantity: Number(mat.quantity),
+      noOfBags: Number(mat.noOfBags),
+      price: parseFloat(mat.price) || 0
+    }));
 
     const trimmedFormData = {
       po_no: formData.po_no ? formData.po_no.trim() : "",
       rr_no: formData.rr_no ? formData.rr_no.trim() : "",
       bill_no: formData.bill_no ? formData.bill_no.trim() : "",
       supplier__id: formData.supplier_id,
-      materials: materialList,
+      materials: formattedMaterials,
       status: formData.status,
       po_date: formData.po_date || null,
       rr_date: formData.rr_date || null,
@@ -295,18 +419,17 @@ const POMaster = () => {
       !trimmedFormData.rr_no ||
       !trimmedFormData.po_no ||
       !trimmedFormData.bill_no ||
-      !trimmedFormData.supplier__id ||
-      trimmedFormData.materials.length === 0
+      !trimmedFormData.supplier__id
     ) {
       Swal.fire({
         toast: true,
         position: "top-end",
         icon: "error",
-        title: "Please fill all required fields and add at least one material",
+        title: "Please fill all required fields",
         showConfirmButton: false,
         timer: 2000
       });
-      setIsSubmitLoading(false)
+      setIsSubmitLoading(false);
       return;
     }
 
@@ -319,26 +442,22 @@ const POMaster = () => {
           toast: true,
           position: "top-end",
           icon: "success",
-          title: "Po updated successfully",
+          title: "PO updated successfully",
           showConfirmButton: false,
           timer: 2000
         });
-
-      }
-      else {
+        closeModal();
+      } else {
         Swal.fire({
           toast: true,
           position: "top-end",
           icon: "error",
-          title: "Something Error, Try Again",
+          title: data.message || "Something went wrong, please try again",
           showConfirmButton: false,
           timer: 2000
         });
       }
-
-
-    }
-    catch (error) {
+    } catch (error) {
       console.error("Error update po:", error);
       Swal.fire({
         icon: "error",
@@ -346,8 +465,7 @@ const POMaster = () => {
         text: error.response?.data?.message || "Something went wrong. Please try again."
       });
     } finally {
-      setIsSubmitLoading(false)
-      closeModal()
+      setIsSubmitLoading(false);
     }
   };
 
@@ -1035,6 +1153,9 @@ const POMaster = () => {
 
   function closeModal() {
     setIsOpen(false);
+    setEditingPoItem(null);
+    setShowAddMaterialForm(false);
+    setMaterialList([]);
     setFormData({
       po_no: "",
       supplier_id: "",
@@ -1341,29 +1462,52 @@ const POMaster = () => {
       )}
 
       {modalIsOpen ? (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex justify-center items-center z-50">
+        <div className="fixed inset-0 bg-black bg-opacity-40 flex justify-center items-center z-50 p-4 overflow-y-auto">
           <form
-            className="px-6 py-4 font-poppins rounded-lg bg-white w-[60em] shadow-lg"
+            className="px-6 py-4 font-poppins rounded-lg bg-white w-full max-w-4xl max-h-[90vh] overflow-y-auto shadow-lg"
             onSubmit={handleSubmit}
           >
-            <div className="flex justify-between border-b py-1">
-              <h1 className="header text-lg font-semibold">Edit PO</h1>
+            <div className="flex justify-between border-b pb-2 items-center">
+              <div className="flex items-center gap-2">
+                <h1 className="header text-lg font-semibold">Edit Purchase Order</h1>
+                {Number(editingPoItem?.dc_count || 0) > 0 && (
+                  <span className="px-2 py-0.5 text-xs font-semibold bg-amber-100 text-amber-800 rounded-full border border-amber-300">
+                    DC Generated ({editingPoItem.dc_count})
+                  </span>
+                )}
+              </div>
               <button
-                className=" text-white flex justify-center bg-primary rounded-full w-7 h-7 items-center"
+                type="button"
+                className="text-white flex justify-center bg-primary rounded-full w-7 h-7 items-center hover:bg-orange-600 transition"
                 onClick={closeModal}
               >
                 <IoCloseSharp />
               </button>
             </div>
-            <div className="grid grid-cols-3 gap-x-5 mt-2 gap-y-2">
 
+            {Number(editingPoItem?.dc_count || 0) > 0 && (
+              <div className="mt-3 p-3 bg-amber-50 border border-amber-200 text-amber-900 rounded-md text-xs flex items-center gap-2">
+                <span className="font-bold text-sm">ℹ</span>
+                <span>
+                  Delivery Challan has already been generated based on this PO. As an Admin, you can edit the <strong>Bags</strong> and <strong>Quantity</strong> directly in the materials table below. Adding new materials is restricted.
+                </span>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-x-4 mt-3 gap-y-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Purchase Order No</label>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  Purchase Order No {Number(editingPoItem?.dc_count || 0) > 0 && <span className="text-[11px] text-orange-600">(Locked)</span>}
+                </label>
                 <input
                   type="text"
                   name="po_no"
                   value={formData.po_no}
-                  className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  disabled={Number(editingPoItem?.dc_count || 0) > 0}
+                  className={`w-full p-2.5 text-sm rounded-md border focus:outline-none focus:ring-2 focus:ring-orange-500 ${
+                    Number(editingPoItem?.dc_count || 0) > 0 ? "bg-gray-100 text-gray-500 cursor-not-allowed border-gray-200" : "bg-white border-gray-300"
+                  }`}
+                  onChange={(e) => setFormData(prev => ({ ...prev, po_no: e.target.value }))}
                 />
               </div>
 
@@ -1377,57 +1521,62 @@ const POMaster = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Bill No</label>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Bill No</label>
                 <input
                   type="text"
                   name="bill_no"
                   value={formData.bill_no}
-                  className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  className="w-full p-2.5 text-sm bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  onChange={(e) => setFormData(prev => ({ ...prev, bill_no: e.target.value }))}
                 />
               </div>
 
-
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">RR NO</label>
+                <label className="block text-xs font-medium text-gray-700 mb-1">
+                  RR NO {Number(editingPoItem?.dc_count || 0) > 0 && <span className="text-[11px] text-orange-600">(Locked)</span>}
+                </label>
                 <input
                   type="text"
                   name="rr_no"
                   value={formData.rr_no}
-                  className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  disabled={Number(editingPoItem?.dc_count || 0) > 0}
+                  className={`w-full p-2.5 text-sm rounded-md border focus:outline-none focus:ring-2 focus:ring-orange-500 ${
+                    Number(editingPoItem?.dc_count || 0) > 0 ? "bg-gray-100 text-gray-500 cursor-not-allowed border-gray-200" : "bg-white border-gray-300"
+                  }`}
                   onChange={(e) => setFormData(prev => ({ ...prev, rr_no: e.target.value }))}
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Supplier Inv Date</label>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Supplier Inv Date</label>
                 <input
                   type="date"
                   name="supplier_invoice_date"
                   value={formData.supplier_invoice_date || ""}
                   onChange={(e) => setFormData(prev => ({ ...prev, supplier_invoice_date: e.target.value }))}
-                  className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  className="w-full p-2.5 text-sm bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">PO Date</label>
+                <label className="block text-xs font-medium text-gray-700 mb-1">PO Date</label>
                 <input
                   type="date"
                   name="po_date"
                   value={formData.po_date || ""}
                   onChange={(e) => setFormData(prev => ({ ...prev, po_date: e.target.value }))}
-                  className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  className="w-full p-2.5 text-sm bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">RR Date</label>
+                <label className="block text-xs font-medium text-gray-700 mb-1">RR Date</label>
                 <input
                   type="date"
                   name="rr_date"
                   value={formData.rr_date || ""}
                   onChange={(e) => setFormData(prev => ({ ...prev, rr_date: e.target.value }))}
-                  className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  className="w-full p-2.5 text-sm bg-white border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
                 />
               </div>
 
@@ -1439,18 +1588,37 @@ const POMaster = () => {
                   onChange={(val) => setFormData(prev => ({ ...prev, status: val }))}
                 />
               </div>
-
             </div>
 
-            <div className="border border-dashed my-5"></div>
+            <div className="border-t border-gray-200 my-4"></div>
 
+            {/* Material Section */}
             <div className="w-full">
-              <h1 className="header text-lg font-semibold">Material</h1>
+              <div className="flex justify-between items-center mb-2">
+                <div>
+                  <h2 className="header text-base font-semibold text-gray-800">Materials</h2>
+                  <p className="text-xs text-gray-500">
+                    {Number(editingPoItem?.dc_count || 0) > 0
+                      ? "DC generated: Edit the Bags and Quantity directly for each material below."
+                      : "Edit the Bags and Quantity for each material directly in the table."}
+                  </p>
+                </div>
+                {/* Optional add material toggle only if no DC exists */}
+                {Number(editingPoItem?.dc_count || 0) === 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddMaterialForm(!showAddMaterialForm)}
+                    className="text-xs text-orange-600 hover:text-orange-700 font-medium underline"
+                  >
+                    {showAddMaterialForm ? "Cancel Add Item" : "+ Add Another Material"}
+                  </button>
+                )}
+              </div>
 
-              <div className="flex gap-4">
-
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mt-4 items-center">
-                  <div>
+              {/* Add Material Row (Only visible if explicitly toggled when no DC is generated) */}
+              {Number(editingPoItem?.dc_count || 0) === 0 && showAddMaterialForm && (
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-2 p-3 bg-gray-50 border border-gray-200 rounded-md mb-3 items-end">
+                  <div className="md:col-span-2">
                     <CustomDropdown
                       label="Select Material"
                       options={materialOption}
@@ -1458,19 +1626,17 @@ const POMaster = () => {
                       onChange={(val) => setSelectedMaterial(val)}
                     />
                   </div>
-
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Quantity</label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Quantity</label>
                     <input
                       type="number"
                       name="quantity"
-                      placeholder="Quantity"
+                      placeholder="Qty"
                       value={quantity}
                       onChange={(e) => setQuantity(e.target.value)}
-                      className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      className="w-full p-2 text-sm bg-white border border-gray-300 rounded-md focus:ring-2 focus:ring-orange-500"
                     />
                   </div>
-
                   <div>
                     <CustomDropdown
                       label="Select Unit"
@@ -1479,103 +1645,131 @@ const POMaster = () => {
                       onChange={(val) => setSelectedUnit(val)}
                     />
                   </div>
-
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Price</label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Price</label>
                     <input
                       type="number"
                       name="price"
                       placeholder="Price"
                       value={price}
                       onChange={(e) => setPrice(e.target.value)}
-                      className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      className="w-full p-2 text-sm bg-white border border-gray-300 rounded-md focus:ring-2 focus:ring-orange-500"
                     />
                   </div>
-
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">No of Bags</label>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">No of Bags</label>
                     <input
                       type="number"
                       name="noOfBags"
-                      placeholder="No of bags"
+                      placeholder="Bags"
                       value={noOfBags}
                       onChange={(e) => setNoOfBags(e.target.value)}
-                      className="w-full p-3 bg-gray-100 rounded-md focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      className="w-full p-2 text-sm bg-white border border-gray-300 rounded-md focus:ring-2 focus:ring-orange-500"
                     />
                   </div>
-
-                  <button
-                    className="px-3 self-end w-1/2 py-3 text-sm bg-primary text-white rounded hover:bg-orange-600 transition"
-                    onClick={handleAddMaterial}
-                    type="button"
-                  >
-                    Add Item
-                  </button>
+                  <div className="col-span-2 md:col-span-6 flex justify-end">
+                    <button
+                      type="button"
+                      className="px-4 py-2 text-xs bg-primary text-white rounded hover:bg-orange-600 transition"
+                      onClick={handleAddMaterial}
+                    >
+                      Add Item to List
+                    </button>
+                  </div>
                 </div>
+              )}
 
-                <div className="w-full mt-4 text-sm border">
-                  <table className="w-full table-fixed">
-                    <thead className="bg-gray-100 sticky top-0 z-10">
+              {/* Full Width Materials Table with editable Bags and Quantity */}
+              <div className="w-full border border-gray-200 rounded-lg overflow-hidden shadow-sm">
+                <table className="w-full text-left border-collapse">
+                  <thead className="bg-gray-100 text-gray-700 text-xs font-semibold uppercase">
+                    <tr>
+                      <th className="p-3 text-center w-12">S.No</th>
+                      <th className="p-3">Material</th>
+                      <th className="p-3 text-center w-28">Price</th>
+                      <th className="p-3 text-center w-24">Unit</th>
+                      <th className="p-3 text-center w-40">Quantity *</th>
+                      <th className="p-3 text-center w-36">No of Bags *</th>
+                      {Number(editingPoItem?.dc_count || 0) === 0 && (
+                        <th className="p-3 text-center w-20">Action</th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200 text-sm">
+                    {materialList.length === 0 ? (
                       <tr>
-                        <th className="p-2">S.No</th>
-                        <th className="p-2">Material</th>
-                        <th className="p-2">Price</th>
-                        <th className="p-2">Quantity</th>
-                        <th className="p-2">Bags</th>
-                        <th className="p-2">Action</th>
+                        <td colSpan={Number(editingPoItem?.dc_count || 0) === 0 ? 7 : 6} className="p-4 text-center text-gray-500 text-sm">
+                          No materials found.
+                        </td>
                       </tr>
-                    </thead>
-                  </table>
-
-                  <div className="h-16 overflow-y-auto">
-                    <table className="w-full table-fixed">
-                      <tbody>
-                        {materialList.map((mat, idx) => (
-                          <tr key={mat.id}>
-                            <td className="p-2 text-center">{idx + 1}</td>
-                            <td className="p-2 text-center">{mat.name}</td>
-                            <td className="p-2 text-center">₹{Number(mat.price || 0).toLocaleString('en-IN')}</td>
-                            <td className="p-2 text-center">{Number(mat.quantity || 0).toLocaleString('en-IN')} {mat.unit_name}</td>
-                            <td className="p-2 text-center">{Number(mat.noOfBags || 0).toLocaleString('en-IN')}</td>
-                            <td className="p-2 text-center">
+                    ) : (
+                      materialList.map((mat, idx) => (
+                        <tr key={mat.id || idx} className="hover:bg-orange-50/30 transition">
+                          <td className="p-3 text-center text-gray-500 font-medium">{idx + 1}</td>
+                          <td className="p-3 font-medium text-gray-800">{mat.name}</td>
+                          <td className="p-3 text-center text-gray-700">₹{Number(mat.price || 0).toLocaleString('en-IN')}</td>
+                          <td className="p-3 text-center text-gray-600">{mat.unit_name || mat.unit || '-'}</td>
+                          <td className="p-3 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={mat.quantity !== undefined && mat.quantity !== null ? mat.quantity : ''}
+                                onChange={(e) => handleMaterialChange(idx, 'quantity', e.target.value)}
+                                placeholder="Qty"
+                                className="w-24 p-1.5 text-center text-sm font-semibold text-gray-900 border border-gray-300 rounded focus:ring-2 focus:ring-orange-500 focus:outline-none bg-white"
+                              />
+                              <span className="text-xs text-gray-500 font-normal">{mat.unit_name || mat.unit || ''}</span>
+                            </div>
+                          </td>
+                          <td className="p-3 text-center">
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={mat.noOfBags !== undefined && mat.noOfBags !== null ? mat.noOfBags : ''}
+                              onChange={(e) => handleMaterialChange(idx, 'noOfBags', e.target.value)}
+                              placeholder="Bags"
+                              className="w-24 p-1.5 text-center text-sm font-semibold text-gray-900 border border-gray-300 rounded focus:ring-2 focus:ring-orange-500 focus:outline-none bg-white"
+                            />
+                          </td>
+                          {Number(editingPoItem?.dc_count || 0) === 0 && (
+                            <td className="p-3 text-center">
                               <button
+                                type="button"
                                 onClick={() => handleDeleteMaterial(mat.id)}
-                                className="text-red-500 hover:text-red-700"
+                                className="text-red-500 hover:text-red-700 text-xs font-semibold"
                               >
                                 Delete
                               </button>
                             </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-
-
+                          )}
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
-
-
             </div>
 
-            <div className="flex justify-between gap-24 mt-2">
+            <div className="flex justify-end gap-3 mt-5 pt-3 border-t">
               <button
                 type="button"
                 onClick={closeModal}
-                className="px-6 py-2.5 w-full bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300"
+                className="px-5 py-2.5 bg-gray-200 text-gray-800 text-sm font-medium rounded-md hover:bg-gray-300 focus:outline-none transition"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-6 py-2.5 w-full bg-orange-500 text-white rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 flex items-center justify-center gap-2"
+                className="px-6 py-2.5 bg-orange-500 text-white text-sm font-medium rounded-md hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 flex items-center justify-center gap-2 transition"
                 disabled={isSubmitLoading}
               >
                 {isSubmitLoading ? (
                   <>
                     <svg
-                      className="animate-spin h-5 w-5 text-white"
+                      className="animate-spin h-4 w-4 text-white"
                       xmlns="http://www.w3.org/2000/svg"
                       fill="none"
                       viewBox="0 0 24 24"
@@ -1594,10 +1788,10 @@ const POMaster = () => {
                         d="M4 12a8 8 0 018-8v8H4z"
                       ></path>
                     </svg>
-                    Submitting...
+                    Saving...
                   </>
                 ) : (
-                  'Submit'
+                  "Save Changes"
                 )}
               </button>
             </div>
@@ -1683,67 +1877,120 @@ const POMaster = () => {
               </tr>
             </thead>
             <tbody className="divide-y font-poppins">
-              {paginatedData.map((item, index) => (
-                <tr key={index} className="hover:bg-gray-50 text-center">
-                  <td className="p-4 text-sm opacity-65">{startIndex + index + 1}</td>
-                  <td className="p-4 text-sm opacity-65">{item.po_no}</td>
-                  <td className="p-4 text-sm w-[20%] opacity-65">{item.supplier_name}</td>
-                  <td className="p-4 text-sm opacity-65">{item.bill_no}</td>
-                  <td className="p-4 text-sm opacity-65">{formatDate(item.supplier_invoice_date)}</td>
-                  <td className="p-4 text-sm opacity-65">{item.rr_no}</td>
+              {paginatedData.map((item, index) => {
+                const itemHasDc = Number(item.dc_count || 0) > 0;
+                return (
+                  <tr key={index} className="hover:bg-gray-50 text-center">
+                    <td className="p-4 text-sm opacity-65">{startIndex + index + 1}</td>
+                    <td className="p-4 text-sm opacity-65">{item.po_no}</td>
+                    <td className="p-4 text-sm w-[20%] opacity-65">{item.supplier_name}</td>
+                    <td className="p-4 text-sm opacity-65">{item.bill_no}</td>
+                    <td className="p-4 text-sm opacity-65">{formatDate(item.supplier_invoice_date)}</td>
+                    <td className="p-4 text-sm opacity-65">
+                      <div className="flex flex-col items-center gap-0.5">
+                        <span>{item.rr_no}</span>
+                        {itemHasDc && (
+                          <span
+                            className="inline-flex px-1.5 py-0.5 text-[10px] font-semibold bg-blue-100 text-blue-700 rounded-full"
+                            title={`${item.dc_count} Delivery Challan(s) Generated`}
+                          >
+                            DC Generated
+                          </span>
+                        )}
+                      </div>
+                    </td>
 
-                  <td className="p-4 text-sm opacity-65">
-                    <span
-                      className={`inline-flex px-2 py-1 text-xs font-semibold capitalize rounded-full
-      ${item.status === 1
-                          ? 'bg-yellow-100 text-yellow-800'
+                    <td className="p-4 text-sm opacity-65">
+                      <span
+                        className={`inline-flex px-2 py-1 text-xs font-semibold capitalize rounded-full
+        ${item.status === 1
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : item.status === 2
+                              ? 'bg-blue-100 text-blue-800'
+                              : item.status === 3
+                                ? 'bg-green-100 text-green-700'
+                                : item.status === 4
+                                  ? 'bg-red-100 text-red-700'
+                                  : 'bg-gray-100 text-gray-700'
+                          }`}
+                      >
+                        {item.status === 1
+                          ? 'Pending'
                           : item.status === 2
-                            ? 'bg-blue-100 text-blue-800'
+                            ? 'In-Transit'
                             : item.status === 3
-                              ? 'bg-green-100 text-green-700'
+                              ? 'Active'
                               : item.status === 4
-                                ? 'bg-red-100 text-red-700'
-                                : 'bg-gray-100 text-gray-700'
-                        }`}
-                    >
-                      {item.status === 1
-                        ? 'Pending'
-                        : item.status === 2
-                          ? 'In-Transit'
-                          : item.status === 3
-                            ? 'Active'
-                            : item.status === 4
-                              ? 'Closed'
-                              : 'Unknown'}
-                    </span>
-                  </td>
+                                ? 'Closed'
+                                : 'Unknown'}
+                      </span>
+                    </td>
 
-                  <td className="p-4 opacity-65 w-[20%] text-sm">{item.material_view}</td>
-                  <td className="p-4 text-center space-x-4 flex justify-center items-center opacity-65">
-                    <button
-                      onClick={() => downloadSinglePoPdf(item)}
-                      title="Download PO PDF"
-                      className="hover:text-orange-500 text-gray-600 transition"
-                    >
-                      <MdFileDownload size={20} />
-                    </button>
-
-                    {
-                      purchaseOrder?.edit && <button onClick={() => handleEdit(item)} title="Edit PO" className=" hover:text-gray-700">
-                        <FiEdit2 size={18} />
+                    <td className="p-4 opacity-65 w-[20%] text-sm">{item.material_view}</td>
+                    <td className="p-4 text-center space-x-4 flex justify-center items-center opacity-65">
+                      <button
+                        onClick={() => downloadSinglePoPdf(item)}
+                        title="Download PO PDF"
+                        className="hover:text-orange-500 text-gray-600 transition"
+                      >
+                        <MdFileDownload size={20} />
                       </button>
-                    }
 
-                    {
-                      purchaseOrder?.delete && <button onClick={() => handleDelete(item.id)} title="Delete PO" className=" hover:text-gray-700">
-                        <RiDeleteBin6Line size={18} />
-                      </button>
-                    }
+                      {/* Edit PO: disabled for users when DC is generated, enabled for Admin */}
+                      {(purchaseOrder?.edit || isAdmin) && (
+                        itemHasDc && !isAdmin ? (
+                          <button
+                            type="button"
+                            disabled
+                            title="Delivery Challan has already been generated based on this PO. Edit is disabled for users (Admin only)."
+                            className="text-gray-300 cursor-not-allowed transition p-1"
+                          >
+                            <FiEdit2 size={18} />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleEdit(item)}
+                            title={itemHasDc ? "Edit PO (Admin: Adjust Bags & Qty)" : "Edit PO"}
+                            className={`transition p-1 ${
+                              itemHasDc ? "text-orange-500 hover:text-orange-700" : "hover:text-gray-700"
+                            }`}
+                          >
+                            <FiEdit2 size={18} />
+                          </button>
+                        )
+                      )}
 
-                  </td>
+                      {/* Delete PO: disabled for users when DC is generated, enabled for Admin */}
+                      {(purchaseOrder?.delete || isAdmin) && (
+                        itemHasDc && !isAdmin ? (
+                          <button
+                            type="button"
+                            disabled
+                            title="Delivery Challan has already been generated based on this PO. Delete is disabled for users (Admin only)."
+                            className="text-gray-300 cursor-not-allowed transition p-1"
+                          >
+                            <RiDeleteBin6Line size={18} />
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleDelete(item.id, item)}
+                            title={itemHasDc ? "Delete PO (Admin: DC Generated)" : "Delete PO"}
+                            className={`transition p-1 ${
+                              itemHasDc ? "text-red-500 hover:text-red-700" : "hover:text-gray-700"
+                            }`}
+                          >
+                            <RiDeleteBin6Line size={18} />
+                          </button>
+                        )
+                      )}
 
-                </tr>
-              ))}
+                    </td>
+
+                  </tr>
+                );
+              })}
 
               {
                 (paginatedData?.length <= 0 && !isLoading) &&

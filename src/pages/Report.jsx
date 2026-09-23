@@ -36,6 +36,7 @@ const COLUMNS = [
   { key: 'gross',            label: 'Total',                        width: 100 },
   { key: 'dc_status',        label: 'DC - Active or Cancelled',     width: 150 },
   { key: 'dc_reason',        label: 'DC Cancelled Reason',          width: 145 },
+  { key: 'is_send_sap',      label: 'SAP Status',                   width: 110 },
   { key: 'truck_no',         label: 'Vehicle No.',                  width: 110 },
   { key: 'ewb_type',         label: 'E-Way Bill Type',              width: 120 },
   { key: 'e_way_bill_no',    label: 'E-way Bill No.',               width: 130 },
@@ -45,6 +46,8 @@ const COLUMNS = [
 ];
 
 // Numeric columns for totals row
+const TOTAL_COLS = new Set(['no_of_bags', 'quantity', 'taxable_value', 'cgst', 'sgst', 'gross']);
+
 // Helper to format any date string into DD-MM-YYYY format
 const formatDate = (val) => {
   if (!val || val === '-' || val === 'null' || val === 'undefined') return '-';
@@ -168,6 +171,7 @@ export default function Report() {
       ...filteredData.map((item, idx) =>
         COLUMNS.map(c => {
           if (c.key === 'row_index') return idx + 1;
+          if (c.key === 'is_send_sap') return item.is_send_sap ? 'Sent' : 'Pending';
           if (['po_date', 'rr_date', 'supplier_inv_date', 'doc_date', 'ewb_date'].includes(c.key)) {
             return formatDate(item[c.key]);
           }
@@ -205,13 +209,25 @@ export default function Report() {
   };
 
   const handleUploadToSAP = async () => {
+    const uniqueDcIds = [...new Set(filteredData.filter(r => !r.is_send_sap && r.dc_status === 'Active').map(r => r.s_no))];
+    if (uniqueDcIds.length === 0) {
+      Swal.fire({ icon: 'info', title: 'Nothing to upload', text: 'All active records are already sent to SAP.' });
+      return;
+    }
+
+    const confirm = await Swal.fire({
+      title: 'Upload to SAP?',
+      text: `Upload ${uniqueDcIds.length} active Delivery Challan(s) to SAP?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#F3890A',
+      cancelButtonColor: '#9CA3AF',
+      confirmButtonText: 'Yes, upload'
+    });
+    if (!confirm.isConfirmed) return;
+
     setIsSapLoad(true);
     try {
-      const uniqueDcIds = [...new Set(filteredData.filter(r => !r.is_send_sap).map(r => r.s_no))];
-      if (uniqueDcIds.length === 0) {
-        Swal.fire({ icon: 'info', title: 'Nothing to upload', text: 'All records are already sent to SAP.' });
-        return;
-      }
 
       const results = await Promise.allSettled(
         uniqueDcIds.map(id => axios.post(`/reports/send-to-sap/${id}`))
@@ -254,6 +270,16 @@ export default function Report() {
   const renderCell = (col, item) => {
     const val = item[col.key];
     if (col.key === 'dc_status' || col.key === 'ewb_status') return statusBadge(val);
+    if (col.key === 'is_send_sap') {
+      const isSent = Boolean(item.is_send_sap);
+      return (
+        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold whitespace-nowrap ${
+          isSent ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'
+        }`}>
+          {isSent ? 'Sent' : 'Pending'}
+        </span>
+      );
+    }
     if (['po_date', 'rr_date', 'supplier_inv_date', 'doc_date', 'ewb_date'].includes(col.key)) {
       return <span>{formatDate(val)}</span>;
     }
@@ -316,7 +342,25 @@ export default function Report() {
           >
             <RiFileExcel2Line size={16} /> Export Excel
           </button>
-
+          <button
+            onClick={handleUploadToSAP}
+            disabled={isSapLoad}
+            className={`flex items-center gap-2 px-4 py-1.5 text-white bg-[#F3890A] hover:bg-orange-600 rounded-lg text-sm font-medium transition ${
+              isSapLoad ? 'opacity-60 cursor-not-allowed' : ''
+            }`}
+          >
+            {isSapLoad ? (
+              <>
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <span>Uploading...</span>
+              </>
+            ) : (
+              <>
+                <RiUploadCloud2Line size={16} />
+                <span>Upload to SAP</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
 

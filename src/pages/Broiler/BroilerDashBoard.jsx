@@ -15,7 +15,7 @@ import {
 import ExcelExport from '../../utils/ExcelExport';
 import { RiSearchLine } from 'react-icons/ri';
 import { LuImport, LuRefreshCw } from 'react-icons/lu';
-import { FiUsers, FiFileText, FiLogIn, FiActivity, FiChevronDown, FiChevronUp, FiImage, FiExternalLink, FiDownload, FiX, FiAlertCircle } from 'react-icons/fi';
+import { FiUsers, FiFileText, FiLogIn, FiActivity, FiChevronDown, FiChevronUp, FiImage, FiExternalLink, FiDownload, FiX, FiAlertCircle, FiNavigation, FiMapPin } from 'react-icons/fi';
 
 const BroilerDashBoard = () => {
   const [loading, setLoading] = useState(false);
@@ -27,6 +27,7 @@ const BroilerDashBoard = () => {
   });
   const [reportDetails, setReportDetails] = useState([]);
   const [loginDetails, setLoginDetails] = useState([]);
+  const [tripDetails, setTripDetails] = useState([]);
   const [expandedRow, setExpandedRow] = useState(null);
   const [farmActivityDetails, setFarmActivityDetails] = useState(null);
   const [farmActivityLoading, setFarmActivityLoading] = useState(false);
@@ -106,7 +107,7 @@ const BroilerDashBoard = () => {
   };
 
   const openPhotoModal = (entry, initialTab = null) => {
-    // 1. Mortality photos
+    // Farm row photo modal: strictly Mortality and Material photos only
     let mortalityPhotos = entry.photos && Array.isArray(entry.photos) && entry.photos.length > 0
       ? normalizePhotosList(entry.photos, 'mortality_photo.jpg')
       : normalizePhotosList(entry.upload_mortality, 'mortality_photo.jpg');
@@ -114,43 +115,68 @@ const BroilerDashBoard = () => {
       mortalityPhotos = normalizePhotosList([entry.photo_url], 'mortality_photo.jpg');
     }
 
-    // 2. Start KM photos
-    let startKmPhotos = entry.start_km_photos && Array.isArray(entry.start_km_photos) && entry.start_km_photos.length > 0
-      ? normalizePhotosList(entry.start_km_photos, 'start_km_photo.jpg')
-      : normalizePhotosList(entry.upload_start_km, 'start_km_photo.jpg');
-    if (!startKmPhotos.length && (entry.start_km_photo_url || farmActivityDetails?.trip?.start_km_photos)) {
-      startKmPhotos = normalizePhotosList(entry.start_km_photo_url || farmActivityDetails?.trip?.start_km_photos, 'start_km_photo.jpg');
+    let materialPhotos = entry.material_photos && Array.isArray(entry.material_photos) && entry.material_photos.length > 0
+      ? normalizePhotosList(entry.material_photos, 'material_photo.jpg')
+      : normalizePhotosList(entry.upload_material, 'material_photo.jpg');
+    if (!materialPhotos.length && entry.material_photo_url) {
+      materialPhotos = normalizePhotosList([entry.material_photo_url], 'material_photo.jpg');
     }
-
-    // 3. End KM photos
-    let endKmPhotos = entry.end_km_photos && Array.isArray(entry.end_km_photos) && entry.end_km_photos.length > 0
-      ? normalizePhotosList(entry.end_km_photos, 'end_km_photo.jpg')
-      : normalizePhotosList(entry.upload_end_km, 'end_km_photo.jpg');
-    if (!endKmPhotos.length && (entry.end_km_photo_url || farmActivityDetails?.trip?.end_km_photos)) {
-      endKmPhotos = normalizePhotosList(entry.end_km_photo_url || farmActivityDetails?.trip?.end_km_photos, 'end_km_photo.jpg');
-    }
-
-    const startKmVal = entry.start_km || farmActivityDetails?.trip?.start_km || null;
-    const endKmVal = entry.end_km || farmActivityDetails?.trip?.end_km || null;
-    const vehicleVal = entry.vehicle_no || farmActivityDetails?.trip?.vehicle_no || null;
 
     let chosenTab = initialTab;
     if (!chosenTab) {
       if (mortalityPhotos.length > 0) chosenTab = 'mortality';
-      else if (startKmPhotos.length > 0) chosenTab = 'start_km';
-      else if (endKmPhotos.length > 0) chosenTab = 'end_km';
+      else if (materialPhotos.length > 0) chosenTab = 'material';
       else chosenTab = 'mortality';
     }
 
     setPhotoModal({
+      isTrip: false,
       entry,
       activeTab: chosenTab,
       mortalityPhotos,
+      materialPhotos,
+      startKmPhotos: [],
+      endKmPhotos: [],
+      startKm: null,
+      endKm: null,
+      vehicleNo: null
+    });
+    setActivePhotoIdx(0);
+    setImageError(false);
+  };
+
+  const openTripPhotoModal = (driver, initialTab = 'start_km') => {
+    // Driver trip modal: strictly Start KM and End KM photos only
+    const startKmPhotos = driver.start_km_photos && Array.isArray(driver.start_km_photos) && driver.start_km_photos.length > 0
+      ? normalizePhotosList(driver.start_km_photos, 'start_km_photo.jpg')
+      : (driver.start_km_photo_url ? normalizePhotosList([driver.start_km_photo_url], 'start_km_photo.jpg') : []);
+
+    const endKmPhotos = driver.end_km_photos && Array.isArray(driver.end_km_photos) && driver.end_km_photos.length > 0
+      ? normalizePhotosList(driver.end_km_photos, 'end_km_photo.jpg')
+      : (driver.end_km_photo_url ? normalizePhotosList([driver.end_km_photo_url], 'end_km_photo.jpg') : []);
+
+    let chosenTab = initialTab;
+    if (!chosenTab) {
+      if (startKmPhotos.length > 0) chosenTab = 'start_km';
+      else if (endKmPhotos.length > 0) chosenTab = 'end_km';
+      else chosenTab = 'start_km';
+    }
+
+    setPhotoModal({
+      isTrip: true,
+      entry: {
+        farmer_name: driver.user_display_name || driver.user_id || 'Driver',
+        user_id: driver.user_id,
+      },
+      driver,
+      activeTab: chosenTab,
+      mortalityPhotos: [],
+      materialPhotos: [],
       startKmPhotos,
       endKmPhotos,
-      startKm: startKmVal,
-      endKm: endKmVal,
-      vehicleNo: vehicleVal
+      startKm: driver.start_km || null,
+      endKm: driver.end_km || null,
+      vehicleNo: driver.vehicle_no || null
     });
     setActivePhotoIdx(0);
     setImageError(false);
@@ -178,6 +204,23 @@ const BroilerDashBoard = () => {
   const [loginCurrentPage, setLoginCurrentPage] = useState(1);
   const loginItemsPerPage = 5;
 
+  // Pagination & filter states for trip report
+  const [tripCurrentPage, setTripCurrentPage] = useState(1);
+  const [tripSearchText, setTripSearchText] = useState('');
+  const [tripDateFilter, setTripDateFilter] = useState('');
+  const [tripUserFilter, setTripUserFilter] = useState('');
+  const [tripPlantFilter, setTripPlantFilter] = useState('');
+  const [tripFarmFilter, setTripFarmFilter] = useState('');
+  const tripItemsPerPage = 6;
+  const [expandedPlants, setExpandedPlants] = useState({});
+
+  const togglePlantExpand = (key) => {
+    setExpandedPlants(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
+
   const fetchReportData = async (fromVal, toVal, periodVal, reasonVal) => {
     setLoading(true);
     try {
@@ -199,6 +242,7 @@ const BroilerDashBoard = () => {
         });
         setReportDetails(data.data.reportDetails || []);
         setLoginDetails(data.data.loginDetails || []);
+        setTripDetails(data.data.tripDetails || []);
         if (data.data.available_mortality_reasons) {
           setAvailableReasonsList(data.data.available_mortality_reasons);
         }
@@ -504,6 +548,27 @@ const BroilerDashBoard = () => {
     const plantLabel = (farmActivityDetails.plant_name || 'Plant').replace(/\s+/g, '_');
     const reasonSuffix = selectedReason ? `_${selectedReason.replace(/\s+/g, '_')}` : '';
     ExcelExport(exportData, `Farm_Activities_${plantLabel}${reasonSuffix}_${farmActivityDetails.date}.xlsx`);
+  };
+
+  const handleExportTripsToExcel = () => {
+    if (!tripDetails || tripDetails.length === 0) {
+      alert("No trip data available to export.");
+      return;
+    }
+    const exportData = tripDetails.map((trip, idx) => ({
+      "S.No": idx + 1,
+      "Trip Date": trip.period_date,
+      "User / Driver": trip.user_display_name || trip.user_id || '-',
+      "User ID": trip.user_id || '-',
+      "Vehicle No": trip.vehicle_no || '-',
+      "Plant": trip.plant_name || trip.plant || '-',
+      "Start KM": trip.start_km || '-',
+      "End KM": trip.end_km || '-',
+      "Running KM": trip.running_km || '-',
+      "Start KM Photos Count": trip.start_km_photos?.length || 0,
+      "End KM Photos Count": trip.end_km_photos?.length || 0,
+    }));
+    ExcelExport(exportData, `Daily_Trip_Details_${fromDate || 'all'}_to_${toDate || 'all'}.xlsx`);
   };
 
   const handleExportLogins = () => {
@@ -1184,25 +1249,23 @@ const BroilerDashBoard = () => {
                                                       )}
                                                     </td>
 
-                                                    {/* Farm Activity Photo Column */}
+                                                    {/* Farm Activity Photo Column (Mortality & Material only) */}
                                                     <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                                                      {((entry.photos && entry.photos.length > 0) || entry.upload_mortality || entry.photo_url || 
-                                                        (entry.start_km_photos && entry.start_km_photos.length > 0) || entry.upload_start_km || entry.start_km_photo_url ||
-                                                        (entry.end_km_photos && entry.end_km_photos.length > 0) || entry.upload_end_km || entry.end_km_photo_url) ? (
+                                                      {((entry.photos && entry.photos.length > 0) || entry.upload_mortality || entry.photo_url ||
+                                                        (entry.material_photos && entry.material_photos.length > 0) || entry.upload_material) ? (
                                                         <button
                                                           type="button"
                                                           onClick={(e) => { e.stopPropagation(); openPhotoModal(entry); }}
                                                           className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 hover:text-amber-900 border border-amber-200/80 rounded-lg font-semibold text-[11px] inline-flex items-center gap-1.5 transition-all shadow-2xs hover:shadow-xs group cursor-pointer"
-                                                          title="Click to view farm activity photos (Mortality, Start KM, End KM)"
+                                                          title="Click to view farm photos (Mortality & Material)"
                                                         >
                                                           <FiImage className="text-amber-600 group-hover:scale-110 transition-transform" size={13} />
                                                           <span>View Photo</span>
                                                           {(() => {
                                                             const mCount = entry.photos?.length || (entry.upload_mortality ? 1 : 0);
-                                                            const sCount = entry.start_km_photos?.length || (entry.upload_start_km ? 1 : 0);
-                                                            const eCount = entry.end_km_photos?.length || (entry.upload_end_km ? 1 : 0);
-                                                            const total = mCount + sCount + eCount;
-                                                            return total > 1 ? (
+                                                            const matCount = entry.material_photos?.length || (entry.upload_material && Array.isArray(entry.upload_material) && entry.upload_material.length > 0 ? entry.upload_material.length : 0);
+                                                            const total = mCount + matCount;
+                                                            return total > 0 ? (
                                                               <span className="ml-0.5 px-1 py-0.2 bg-amber-200 text-amber-800 rounded-full text-[9px] font-bold">
                                                                 {total}
                                                               </span>
@@ -1295,6 +1358,142 @@ const BroilerDashBoard = () => {
                                         </div>
                                       );
                                     })()}
+
+                                      {/* Trip & Travel Details Section (Start KM & End KM Tracking Down of Farm Activity) */}
+                                      {(() => {
+                                        const driversList = (farmActivityDetails.trip_drivers && farmActivityDetails.trip_drivers.length > 0)
+                                          ? farmActivityDetails.trip_drivers
+                                          : (farmActivityDetails.trip && (farmActivityDetails.trip.start_km || farmActivityDetails.trip.end_km || farmActivityDetails.trip.vehicle_no !== '-') ? [farmActivityDetails.trip] : []);
+
+                                        return (
+                                          <div className="mt-4 bg-white rounded-2xl border border-blue-100/90 shadow-2xs overflow-hidden">
+                                            {/* Section Header */}
+                                            <div className="px-5 py-3.5 bg-gradient-to-r from-blue-50/90 via-sky-50/50 to-indigo-50/40 border-b border-blue-100 flex flex-wrap items-center justify-between gap-3">
+                                              <div className="flex items-center gap-2.5">
+                                                <div className="p-2 bg-blue-600 text-white rounded-xl shadow-xs">
+                                                  <FiNavigation size={14} />
+                                                </div>
+                                                <div>
+                                                  <h5 className="text-xs font-bold text-gray-900 flex items-center gap-2">
+                                                    Trip & Travel Details (Start KM & End KM)
+                                                    <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full text-[10px] font-bold">
+                                                      {driversList.length} {driversList.length === 1 ? 'User' : 'Users'}
+                                                    </span>
+                                                  </h5>
+                                                  <p className="text-[11px] text-gray-500">
+                                                    Daily trip odometer details per user (1 Start & 1 End KM per day)
+                                                  </p>
+                                                </div>
+                                              </div>
+                                            </div>
+
+                                            {/* Drivers Table */}
+                                            {driversList.length > 0 ? (
+                                              <div className="overflow-x-auto">
+                                                <table className="w-full text-xs text-left">
+                                                  <thead className="bg-slate-50/80 text-gray-600 font-semibold border-b border-gray-100 uppercase tracking-wider text-[10px]">
+                                                    <tr>
+                                                      <th className="px-4 py-2.5">User / Driver</th>
+                                                      <th className="px-4 py-2.5">Vehicle No</th>
+                                                      <th className="px-4 py-2.5 text-center">Start KM</th>
+                                                      <th className="px-4 py-2.5 text-center">Start KM Photo</th>
+                                                      <th className="px-4 py-2.5 text-center">End KM</th>
+                                                      <th className="px-4 py-2.5 text-center">End KM Photo</th>
+                                                      <th className="px-4 py-2.5 text-center">Running KM</th>
+                                                    </tr>
+                                                  </thead>
+                                                  <tbody className="divide-y divide-gray-100">
+                                                    {driversList.map((driver, dIdx) => {
+                                                      const sPhotos = driver.start_km_photos || [];
+                                                      const ePhotos = driver.end_km_photos || [];
+                                                      const hasStartPhotos = sPhotos.length > 0 || driver.start_km_photo_url;
+                                                      const hasEndPhotos = ePhotos.length > 0 || driver.end_km_photo_url;
+                                                      const diffKm = (driver.start_km && driver.end_km)
+                                                        ? (Number(driver.end_km) - Number(driver.start_km)).toFixed(2)
+                                                        : driver.running_km;
+
+                                                      return (
+                                                        <tr key={dIdx} className="hover:bg-blue-50/30 transition-colors">
+                                                          <td className="px-4 py-3 whitespace-nowrap">
+                                                            <div className="font-bold text-gray-900">{driver.user_display_name || driver.user_id || 'Unknown'}</div>
+                                                            <div className="text-[10px] text-gray-400 font-mono">ID: {driver.user_id || '-'}</div>
+                                                          </td>
+                                                          <td className="px-4 py-3 whitespace-nowrap">
+                                                            <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg font-mono font-bold text-[11px]">
+                                                              {driver.vehicle_no || '-'}
+                                                            </span>
+                                                          </td>
+                                                          <td className="px-4 py-3 text-center whitespace-nowrap">
+                                                            <span className="px-2.5 py-1 bg-blue-50 text-blue-700 rounded-lg font-bold text-[11px]">
+                                                              {driver.start_km ? `${driver.start_km} KM` : '-'}
+                                                            </span>
+                                                          </td>
+                                                          <td className="px-4 py-3 text-center whitespace-nowrap">
+                                                            {hasStartPhotos ? (
+                                                              <button
+                                                                type="button"
+                                                                onClick={() => openTripPhotoModal(driver, 'start_km')}
+                                                                className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/80 rounded-lg font-semibold text-[11px] inline-flex items-center gap-1.5 transition shadow-2xs hover:shadow-xs cursor-pointer"
+                                                              >
+                                                                <FiImage size={12} className="text-blue-600" />
+                                                                <span>View Photo</span>
+                                                                {sPhotos.length > 0 && (
+                                                                  <span className="px-1 py-0.2 bg-blue-200 text-blue-800 rounded-full text-[9px] font-bold">
+                                                                    {sPhotos.length}
+                                                                  </span>
+                                                                )}
+                                                              </button>
+                                                            ) : (
+                                                              <span className="text-gray-300 font-medium">-</span>
+                                                            )}
+                                                          </td>
+                                                          <td className="px-4 py-3 text-center whitespace-nowrap">
+                                                            <span className="px-2.5 py-1 bg-green-50 text-green-700 rounded-lg font-bold text-[11px]">
+                                                              {driver.end_km ? `${driver.end_km} KM` : '-'}
+                                                            </span>
+                                                          </td>
+                                                          <td className="px-4 py-3 text-center whitespace-nowrap">
+                                                            {hasEndPhotos ? (
+                                                              <button
+                                                                type="button"
+                                                                onClick={() => openTripPhotoModal(driver, 'end_km')}
+                                                                className="px-2.5 py-1 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200/80 rounded-lg font-semibold text-[11px] inline-flex items-center gap-1.5 transition shadow-2xs hover:shadow-xs cursor-pointer"
+                                                              >
+                                                                <FiImage size={12} className="text-green-600" />
+                                                                <span>View Photo</span>
+                                                                {ePhotos.length > 0 && (
+                                                                  <span className="px-1 py-0.2 bg-green-200 text-green-800 rounded-full text-[9px] font-bold">
+                                                                    {ePhotos.length}
+                                                                  </span>
+                                                                )}
+                                                              </button>
+                                                            ) : (
+                                                              <span className="text-gray-300 font-medium">-</span>
+                                                            )}
+                                                          </td>
+                                                          <td className="px-4 py-3 text-center whitespace-nowrap">
+                                                            {diffKm !== null && diffKm !== undefined ? (
+                                                              <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 rounded-lg font-bold text-[11px]">
+                                                                {diffKm} KM
+                                                              </span>
+                                                            ) : (
+                                                              <span className="text-gray-300">-</span>
+                                                            )}
+                                                          </td>
+                                                        </tr>
+                                                      );
+                                                    })}
+                                                  </tbody>
+                                                </table>
+                                              </div>
+                                            ) : (
+                                              <div className="px-5 py-6 text-center text-gray-400 text-xs">
+                                                No trip odometer details recorded for this date.
+                                              </div>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
                                   </div>
                                 </div>
                               ) : (
@@ -1338,6 +1537,568 @@ const BroilerDashBoard = () => {
             </button>
           </div>
         )}
+      </div>
+
+      {/* ═══════════ Trip & Travel Details (Start KM & End KM) Section Down of Farm Activity ═══════════ */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-8">
+        <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 mb-5">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-blue-600 text-white rounded-xl shadow-xs">
+                <FiNavigation size={18} />
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-gray-950 flex items-center gap-2">
+                  Trip & Travel Details (Plant-wise Start KM & End KM)
+                  <span className="px-2.5 py-0.5 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">
+                    {tripDetails.length} {tripDetails.length === 1 ? 'Trip Record' : 'Trip Records'}
+                  </span>
+                </h3>
+                <p className="text-sm text-gray-500 mt-0.5">
+                  Plant-wise user vehicle travel & odometer tracking. Click any plant to view its users and their KM details.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportTripsToExcel}
+              className="px-4 py-2 bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-200 rounded-xl flex items-center gap-2 text-xs font-semibold transition-all shadow-2xs cursor-pointer"
+              title="Export Trip & KM Details to Excel"
+            >
+              <LuImport size={14} />
+              <span>Export Trips</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Dedicated Filters Toolbar: Date Filter, User Filter, Farm/Plant Filter & Search */}
+        {(() => {
+          const uniqueTripUsers = Array.from(
+            new Set(tripDetails.map(t => t.user_display_name || t.user_id).filter(Boolean))
+          ).sort();
+
+          const uniqueTripPlants = Array.from(
+            new Set(tripDetails.map(t => t.plant_name || t.plant).filter(Boolean))
+          ).sort();
+
+          const uniqueTripFarms = Array.from(
+            new Set(tripDetails.flatMap(t => t.farms || []).filter(Boolean))
+          ).sort();
+
+          const hasActiveTripFilters = Boolean(tripDateFilter || tripUserFilter || tripPlantFilter || tripFarmFilter || tripSearchText);
+
+          return (
+            <div className="flex flex-wrap items-center gap-3 mb-6 p-3.5 bg-gradient-to-r from-blue-50/70 via-sky-50/40 to-slate-50/60 rounded-2xl border border-blue-100/90 shadow-2xs">
+              {/* 1. Date Filter */}
+              <div className="flex items-center gap-1.5 bg-white border border-gray-200/90 rounded-xl p-1.5 px-3 shadow-2xs">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Date</span>
+                <input
+                  type="date"
+                  value={tripDateFilter}
+                  onChange={(e) => {
+                    setTripDateFilter(e.target.value);
+                    setTripCurrentPage(1);
+                  }}
+                  className="text-xs bg-transparent outline-none font-medium text-gray-700 cursor-pointer"
+                />
+                {tripDateFilter && (
+                  <button
+                    onClick={() => { setTripDateFilter(''); setTripCurrentPage(1); }}
+                    className="text-xs text-gray-400 hover:text-red-500 font-bold px-1 cursor-pointer"
+                    title="Clear Date"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+
+              {/* 2. User / Driver Filter */}
+              <div className="flex items-center gap-1.5 bg-white border border-gray-200/90 rounded-xl p-1.5 px-3 shadow-2xs">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">User</span>
+                <select
+                  value={tripUserFilter}
+                  onChange={(e) => {
+                    setTripUserFilter(e.target.value);
+                    setTripCurrentPage(1);
+                  }}
+                  className="text-xs bg-transparent outline-none font-medium text-gray-700 cursor-pointer max-w-[150px]"
+                >
+                  <option value="">All Users</option>
+                  {uniqueTripUsers.map(user => (
+                    <option key={user} value={user}>{user}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 3. Plant Filter */}
+              <div className="flex items-center gap-1.5 bg-white border border-gray-200/90 rounded-xl p-1.5 px-3 shadow-2xs">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Plant</span>
+                <select
+                  value={tripPlantFilter}
+                  onChange={(e) => {
+                    setTripPlantFilter(e.target.value);
+                    setTripCurrentPage(1);
+                  }}
+                  className="text-xs bg-transparent outline-none font-medium text-gray-700 cursor-pointer max-w-[170px]"
+                >
+                  <option value="">All Plants</option>
+                  {uniqueTripPlants.map(item => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 4. Farm Filter */}
+              <div className="flex items-center gap-1.5 bg-white border border-gray-200/90 rounded-xl p-1.5 px-3 shadow-2xs">
+                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Farm</span>
+                <select
+                  value={tripFarmFilter}
+                  onChange={(e) => {
+                    setTripFarmFilter(e.target.value);
+                    setTripCurrentPage(1);
+                  }}
+                  className="text-xs bg-transparent outline-none font-medium text-gray-700 cursor-pointer max-w-[170px]"
+                >
+                  <option value="">All Farms</option>
+                  {uniqueTripFarms.map(item => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 5. Search Filter */}
+              <div className="relative flex-1 min-w-[200px]">
+                <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                  <RiSearchLine size={13} />
+                </span>
+                <input
+                  type="text"
+                  placeholder="Search user, vehicle, farm..."
+                  value={tripSearchText}
+                  onChange={(e) => {
+                    setTripSearchText(e.target.value);
+                    setTripCurrentPage(1);
+                  }}
+                  className="pl-9 pr-3 py-1.5 bg-white border border-gray-200/90 rounded-xl text-xs outline-none focus:ring-2 focus:ring-blue-500 w-full shadow-2xs font-medium"
+                />
+              </div>
+
+              {/* Reset All Filters Button */}
+              {hasActiveTripFilters && (
+                <button
+                  onClick={() => {
+                    setTripDateFilter('');
+                    setTripUserFilter('');
+                    setTripPlantFilter('');
+                    setTripFarmFilter('');
+                    setTripSearchText('');
+                    setTripCurrentPage(1);
+                  }}
+                  className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200/80 rounded-xl text-xs font-semibold transition cursor-pointer"
+                >
+                  Reset Filters
+                </button>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Plant-wise Trips & KM Table */}
+        {(() => {
+          const filteredTrips = tripDetails.filter(trip => {
+            // 1. Date filter
+            if (tripDateFilter && trip.period_date !== tripDateFilter) return false;
+
+            // 2. User filter
+            if (tripUserFilter && (trip.user_display_name !== tripUserFilter && trip.user_id !== tripUserFilter)) return false;
+
+            // 3. Plant filter
+            if (tripPlantFilter) {
+              const matchesPlant = trip.plant_name === tripPlantFilter || String(trip.plant) === tripPlantFilter;
+              if (!matchesPlant) return false;
+            }
+
+            // 4. Farm filter
+            if (tripFarmFilter) {
+              const matchesFarm = trip.farms && trip.farms.includes(tripFarmFilter);
+              if (!matchesFarm) return false;
+            }
+
+            // 5. Search text filter
+            if (tripSearchText) {
+              const q = tripSearchText.toLowerCase();
+              const matchesUser = String(trip.user_display_name || '').toLowerCase().includes(q) || String(trip.user_id || '').toLowerCase().includes(q);
+              const matchesVehicle = String(trip.vehicle_no || '').toLowerCase().includes(q);
+              const matchesPlant = String(trip.plant_name || '').toLowerCase().includes(q) || String(trip.plant || '').toLowerCase().includes(q);
+              const matchesDate = String(trip.period_date || '').toLowerCase().includes(q);
+              const matchesFarm = trip.farms && trip.farms.some(f => String(f).toLowerCase().includes(q));
+              if (!matchesUser && !matchesVehicle && !matchesPlant && !matchesDate && !matchesFarm) return false;
+            }
+            return true;
+          });
+
+          // Group filtered trips by Plant
+          const plantGroups = {};
+          filteredTrips.forEach(trip => {
+            const plantKey = String(trip.plant_name || trip.plant || 'Other / Unknown').trim();
+            if (!plantGroups[plantKey]) {
+              plantGroups[plantKey] = {
+                key: plantKey,
+                plant_name: trip.plant_name || (trip.plant ? `Plant ${trip.plant}` : 'Other / Unknown'),
+                plant_code: trip.plant || '',
+                trips: [],
+                usersMap: {},
+                totalRunningKm: 0,
+                totalFarms: new Set(),
+              };
+            }
+            const pg = plantGroups[plantKey];
+            pg.trips.push(trip);
+
+            if (trip.farms && Array.isArray(trip.farms)) {
+              trip.farms.forEach(f => pg.totalFarms.add(f));
+            }
+
+            const uKey = String(trip.user_id || trip.user_display_name || 'unknown');
+            if (!pg.usersMap[uKey]) {
+              pg.usersMap[uKey] = {
+                user_id: trip.user_id,
+                user_display_name: trip.user_display_name || trip.user_id || 'Unknown User',
+                trips: [],
+                totalKm: 0,
+                vehicles: new Set(),
+                farms: new Set(),
+              };
+            }
+            const uObj = pg.usersMap[uKey];
+            uObj.trips.push(trip);
+            if (trip.vehicle_no) uObj.vehicles.add(trip.vehicle_no);
+            if (trip.farms && Array.isArray(trip.farms)) {
+              trip.farms.forEach(f => uObj.farms.add(f));
+            }
+
+            const sKm = parseFloat(trip.start_km);
+            const eKm = parseFloat(trip.end_km);
+            const rKm = parseFloat(trip.running_km);
+
+            let diff = 0;
+            if (!isNaN(sKm) && !isNaN(eKm) && sKm > 0 && eKm > 0) {
+              diff = Math.abs(eKm - sKm);
+            } else if (!isNaN(rKm) && rKm > 0) {
+              diff = rKm;
+            }
+
+            uObj.totalKm += diff;
+            pg.totalRunningKm += diff;
+          });
+
+          const plantList = Object.values(plantGroups);
+          const totalPlantPages = Math.ceil(plantList.length / tripItemsPerPage) || 1;
+          const displayedPlants = plantList.slice((tripCurrentPage - 1) * tripItemsPerPage, tripCurrentPage * tripItemsPerPage);
+
+          return (
+            <>
+              {/* Header Action Summary Bar */}
+              {plantList.length > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3 px-1 text-xs text-gray-500 font-medium">
+                  <div className="flex items-center gap-2">
+                    <span className="font-semibold text-gray-700">
+                      Showing {plantList.length} {plantList.length === 1 ? 'Plant' : 'Plants'} ({filteredTrips.length} Total Trips)
+                    </span>
+                    <span className="text-gray-300">|</span>
+                    <span className="text-blue-600 font-semibold">
+                      Click any plant to view users and KM details
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allExpanded = plantList.every(p => expandedPlants[p.key]);
+                        const next = {};
+                        plantList.forEach(p => { next[p.key] = !allExpanded; });
+                        setExpandedPlants(next);
+                      }}
+                      className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition cursor-pointer"
+                    >
+                      {plantList.every(p => expandedPlants[p.key]) ? 'Collapse All Plants' : 'Expand All Plants'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Plant-wise Table */}
+              <div className="overflow-x-auto rounded-xl border border-gray-200 shadow-2xs">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-gray-600 uppercase text-[10px] tracking-wider border-b border-gray-200">
+                    <tr>
+                      <th className="w-10 px-3 py-3 text-center"></th>
+                      <th className="px-4 py-3 font-semibold">Plant / Branch</th>
+                      <th className="px-4 py-3 font-semibold">Users / Drivers</th>
+                      <th className="px-4 py-3 font-semibold text-center">Trips Recorded</th>
+                      <th className="px-4 py-3 font-semibold text-center">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {displayedPlants.length > 0 ? (
+                      displayedPlants.map((pg) => {
+                        const isExpanded = Boolean(expandedPlants[pg.key]);
+                        const userNames = Object.values(pg.usersMap).map(u => u.user_display_name || u.user_id);
+
+                        return (
+                          <React.Fragment key={pg.key}>
+                            {/* Plant Summary Row */}
+                            <tr
+                              onClick={() => togglePlantExpand(pg.key)}
+                              className={`transition-colors cursor-pointer border-b border-gray-100 ${
+                                isExpanded ? 'bg-blue-50/40 hover:bg-blue-50/60' : 'hover:bg-slate-50/80 bg-white'
+                              }`}
+                            >
+                              <td className="px-3 py-3.5 text-center text-gray-500">
+                                <span className="p-1 rounded-md text-blue-600 inline-block">
+                                  {isExpanded ? <FiChevronUp size={16} /> : <FiChevronDown size={16} />}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3.5 whitespace-nowrap">
+                                <div className="font-bold text-gray-900 text-sm flex items-center gap-1.5">
+                                  <FiMapPin className="text-blue-600 shrink-0" size={14} />
+                                  <span>{pg.plant_name}</span>
+                                </div>
+                                {pg.plant_code && (
+                                  <div className="text-[10px] text-gray-400 font-mono mt-0.5 ml-5">
+                                    Code: {pg.plant_code}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-4 py-3.5">
+                                <div className="flex flex-wrap items-center gap-1.5 max-w-sm">
+                                  <span className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200/80 rounded-full font-bold text-[10px]">
+                                    👥 {userNames.length} {userNames.length === 1 ? 'User' : 'Users'}
+                                  </span>
+                                  {userNames.slice(0, 2).map((uName, uI) => (
+                                    <span key={uI} className="px-2 py-0.5 bg-gray-100 text-gray-700 rounded-md text-[10px] font-medium">
+                                      {uName}
+                                    </span>
+                                  ))}
+                                  {userNames.length > 2 && (
+                                    <span className="text-[10px] text-gray-400 font-medium">
+                                      +{userNames.length - 2} more
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+
+                              <td className="px-4 py-3.5 text-center whitespace-nowrap">
+                                <span className="px-2.5 py-1 bg-slate-100 text-slate-700 rounded-lg font-bold text-[11px]">
+                                  🚗 {pg.trips.length} {pg.trips.length === 1 ? 'Trip' : 'Trips'}
+                                </span>
+                              </td>
+
+                              <td className="px-4 py-3.5 text-center whitespace-nowrap">
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    togglePlantExpand(pg.key);
+                                  }}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 transition shadow-2xs cursor-pointer ${
+                                    isExpanded
+                                      ? 'bg-blue-600 text-white shadow-xs'
+                                      : 'bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200'
+                                  }`}
+                                >
+                                  <span>{isExpanded ? 'Hide Users & KM' : 'View Users & KM'}</span>
+                                  {isExpanded ? <FiChevronUp size={13} /> : <FiChevronDown size={13} />}
+                                </button>
+                              </td>
+                            </tr>
+
+                            {/* Expanded Plant Row: Users & KM Details */}
+                            {isExpanded && (
+                              <tr className="bg-slate-50/70 border-b border-blue-100">
+                                <td colSpan="5" className="p-4 md:p-5">
+                                  <div className="bg-white rounded-xl border border-blue-200/90 p-4 sm:p-5 shadow-xs">
+                                    {/* Expanded Header */}
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 mb-4 border-b border-gray-100">
+                                      <div>
+                                        <h4 className="text-sm font-bold text-gray-900 flex items-center gap-2">
+                                          <span className="w-2.5 h-2.5 rounded-full bg-blue-600 inline-block" />
+                                          <span>{pg.plant_name}</span>
+                                          {pg.plant_code && <span className="text-xs text-gray-400 font-mono">({pg.plant_code})</span>}
+                                          <span className="text-xs font-semibold text-blue-600">— Plant Users &amp; KM Details</span>
+                                        </h4>
+                                        <p className="text-[11px] text-gray-500 mt-0.5">
+                                          Showing all drivers, odometer readings, and Start / End KM photos for this plant.
+                                        </p>
+                                      </div>
+
+                                    </div>
+
+
+
+                                    {/* Detailed User KM Records Sub-table */}
+                                    <div className="overflow-x-auto rounded-xl border border-gray-200">
+                                      <table className="w-full text-left text-xs">
+                                        <thead className="bg-slate-50 text-gray-600 uppercase text-[10px] tracking-wider border-b border-gray-200">
+                                          <tr>
+                                            <th className="px-3 py-2.5 font-semibold">Date</th>
+                                            <th className="px-3 py-2.5 font-semibold">User / Driver</th>
+                                            <th className="px-3 py-2.5 font-semibold">Vehicle No</th>
+                                            <th className="px-3 py-2.5 font-semibold">Farms Visited</th>
+                                            <th className="px-3 py-2.5 font-semibold text-center">Start KM</th>
+                                            <th className="px-3 py-2.5 font-semibold text-center">Start KM Photo</th>
+                                            <th className="px-3 py-2.5 font-semibold text-center">End KM</th>
+                                            <th className="px-3 py-2.5 font-semibold text-center">End KM Photo</th>
+                                            <th className="px-3 py-2.5 font-semibold text-center">Running KM</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-100 bg-white">
+                                          {pg.trips.map((trip, tIdx) => {
+                                            const sPhotos = trip.start_km_photos || [];
+                                            const ePhotos = trip.end_km_photos || [];
+                                            const hasStart = sPhotos.length > 0 || trip.start_km_photo_url;
+                                            const hasEnd = ePhotos.length > 0 || trip.end_km_photo_url;
+                                            const sKmNum = parseFloat(trip.start_km);
+                                            const eKmNum = parseFloat(trip.end_km);
+                                            const rKmNum = parseFloat(trip.running_km);
+                                            const diffKm = (!isNaN(sKmNum) && !isNaN(eKmNum) && sKmNum > 0 && eKmNum > 0)
+                                              ? Math.abs(eKmNum - sKmNum).toFixed(2)
+                                              : (!isNaN(rKmNum) && rKmNum > 0 ? rKmNum.toFixed(2) : trip.running_km);
+
+                                            return (
+                                              <tr key={tIdx} className="hover:bg-blue-50/20 transition-colors">
+                                                <td className="px-3 py-2.5 font-medium text-gray-900 whitespace-nowrap">
+                                                  {trip.period_date}
+                                                </td>
+                                                <td className="px-3 py-2.5 whitespace-nowrap">
+                                                  <div className="font-bold text-gray-900">{trip.user_display_name || trip.user_id}</div>
+                                                  <div className="text-[10px] text-gray-400 font-mono">ID: {trip.user_id}</div>
+                                                </td>
+                                                <td className="px-3 py-2.5 whitespace-nowrap">
+                                                  <span className="px-2 py-0.5 bg-slate-100 text-slate-700 rounded font-mono font-bold text-[10px]">
+                                                    {trip.vehicle_no || '-'}
+                                                  </span>
+                                                </td>
+                                                <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">
+                                                  {trip.farms && trip.farms.length > 0 ? (
+                                                    <div className="text-[10px] text-teal-700 font-medium" title={trip.farms.join(', ')}>
+                                                      <span className="px-1.5 py-0.5 bg-teal-50 border border-teal-200/80 rounded-md inline-flex items-center gap-1">
+                                                        <span>🏡 {trip.farms.length} {trip.farms.length === 1 ? 'Farm' : 'Farms'}:</span>
+                                                        <span className="font-mono">{trip.farms.slice(0, 2).join(', ')}{trip.farms.length > 2 ? ` +${trip.farms.length - 2}` : ''}</span>
+                                                      </span>
+                                                    </div>
+                                                  ) : (
+                                                    <span className="text-gray-400 text-[10px]">-</span>
+                                                  )}
+                                                </td>
+                                                <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                                                  <span className="px-2 py-0.5 bg-blue-50 text-blue-700 rounded font-bold text-[10px]">
+                                                    {trip.start_km ? `${trip.start_km} KM` : '-'}
+                                                  </span>
+                                                </td>
+                                                <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                                                  {hasStart ? (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => openTripPhotoModal(trip, 'start_km')}
+                                                      className="px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/80 rounded-lg font-semibold text-[10px] inline-flex items-center gap-1.5 transition shadow-2xs hover:shadow-xs cursor-pointer"
+                                                    >
+                                                      <FiImage size={11} className="text-blue-600" />
+                                                      <span>View Photo</span>
+                                                      {sPhotos.length > 0 && (
+                                                        <span className="px-1 py-0.2 bg-blue-200 text-blue-800 rounded-full text-[8px] font-bold">
+                                                          {sPhotos.length}
+                                                        </span>
+                                                      )}
+                                                    </button>
+                                                  ) : (
+                                                    <span className="text-gray-300 font-medium">-</span>
+                                                  )}
+                                                </td>
+                                                <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                                                  <span className="px-2 py-0.5 bg-green-50 text-green-700 rounded font-bold text-[10px]">
+                                                    {trip.end_km ? `${trip.end_km} KM` : '-'}
+                                                  </span>
+                                                </td>
+                                                <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                                                  {hasEnd ? (
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => openTripPhotoModal(trip, 'end_km')}
+                                                      className="px-2.5 py-1 bg-green-50 hover:bg-green-100 text-green-700 border border-green-200/80 rounded-lg font-semibold text-[10px] inline-flex items-center gap-1.5 transition shadow-2xs hover:shadow-xs cursor-pointer"
+                                                    >
+                                                      <FiImage size={11} className="text-green-600" />
+                                                      <span>View Photo</span>
+                                                      {ePhotos.length > 0 && (
+                                                        <span className="px-1 py-0.2 bg-green-200 text-green-800 rounded-full text-[8px] font-bold">
+                                                          {ePhotos.length}
+                                                        </span>
+                                                      )}
+                                                    </button>
+                                                  ) : (
+                                                    <span className="text-gray-300 font-medium">-</span>
+                                                  )}
+                                                </td>
+                                                <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                                                  {diffKm !== null && diffKm !== undefined ? (
+                                                    <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded font-bold text-[10px]">
+                                                      {diffKm} KM
+                                                    </span>
+                                                  ) : (
+                                                    <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200/80 rounded font-semibold text-[10px]" title="Trip is active / End KM not recorded yet">
+                                                      In Progress
+                                                    </span>
+                                                  )}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      })
+                    ) : (
+                      <tr>
+                        <td colSpan="5" className="px-6 py-8 text-center text-gray-400 font-medium">
+                          {loading ? "Loading trip data..." : (tripSearchText || tripDateFilter || tripUserFilter || tripFarmFilter ? "No plant records matching the selected filters." : "No user trip odometer records found for the selected period.")}
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Plant Pagination */}
+              {totalPlantPages > 1 && (
+                <div className="flex justify-end items-center gap-2 mt-4">
+                  <button
+                    onClick={() => setTripCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={tripCurrentPage === 1}
+                    className={`px-3 py-1.5 border rounded-lg text-xs font-semibold ${tripCurrentPage === 1 ? 'text-gray-400 bg-gray-50 border-gray-100 cursor-not-allowed' : 'text-white bg-blue-600 border-blue-600 hover:bg-blue-700 cursor-pointer'}`}
+                  >
+                    Prev
+                  </button>
+                  <span className="text-xs text-gray-500 font-semibold px-2">Page {tripCurrentPage} of {totalPlantPages}</span>
+                  <button
+                    onClick={() => setTripCurrentPage(prev => Math.min(prev + 1, totalPlantPages))}
+                    disabled={tripCurrentPage === totalPlantPages}
+                    className={`px-3 py-1.5 border rounded-lg text-xs font-semibold ${tripCurrentPage === totalPlantPages ? 'text-gray-400 bg-gray-50 border-gray-100 cursor-not-allowed' : 'text-white bg-blue-600 border-blue-600 hover:bg-blue-700 cursor-pointer'}`}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {/* ═══════════ Bill of Supply Section ═══════════ */}
@@ -1784,17 +2545,19 @@ const BroilerDashBoard = () => {
 
       {/* Photo Viewer Modal with Mortality, Start KM, and End KM Tabs */}
       {photoModal && (() => {
-        const currentPhotosList = (photoModal.activeTab === 'start_km' 
-          ? photoModal.startKmPhotos 
-          : photoModal.activeTab === 'end_km' 
-          ? photoModal.endKmPhotos 
-          : photoModal.mortalityPhotos) || [];
-        
+        const currentPhotosList = (
+          photoModal.activeTab === 'material' ? photoModal.materialPhotos :
+          photoModal.activeTab === 'start_km' ? photoModal.startKmPhotos :
+          photoModal.activeTab === 'end_km' ? photoModal.endKmPhotos :
+          photoModal.mortalityPhotos
+        ) || [];
+
         const currentPhoto = currentPhotosList[activePhotoIdx] || currentPhotosList[0] || null;
         const currentUrl = currentPhoto?.url || currentPhoto?.uri || null;
 
         const isStartKm = photoModal.activeTab === 'start_km';
         const isEndKm = photoModal.activeTab === 'end_km';
+        const isMaterial = photoModal.activeTab === 'material';
         const isMortality = photoModal.activeTab === 'mortality';
 
         return (
@@ -1808,30 +2571,45 @@ const BroilerDashBoard = () => {
             >
               {/* Modal Header */}
               <div className={`flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gradient-to-r ${
-                isStartKm ? 'from-blue-50/90 to-sky-50/60' :
-                isEndKm ? 'from-green-50/90 to-emerald-50/60' :
-                'from-orange-50/90 to-amber-50/60'
+                photoModal.isTrip ? (
+                  isStartKm ? 'from-blue-50/90 to-sky-50/60' : 'from-green-50/90 to-emerald-50/60'
+                ) : (
+                  isMaterial ? 'from-teal-50/90 to-cyan-50/60' : 'from-orange-50/90 to-amber-50/60'
+                )
               }`}>
                 <div className="flex items-center gap-3">
                   <div className={`p-2.5 text-white rounded-xl shadow-xs ${
-                    isStartKm ? 'bg-blue-600' :
-                    isEndKm ? 'bg-green-600' :
-                    'bg-orange-500'
+                    photoModal.isTrip ? (
+                      isStartKm ? 'bg-blue-600' : 'bg-green-600'
+                    ) : (
+                      isMaterial ? 'bg-teal-600' : 'bg-orange-500'
+                    )
                   }`}>
-                    <FiImage size={20} />
+                    {photoModal.isTrip ? <FiNavigation size={20} /> : <FiImage size={20} />}
                   </div>
                   <div>
                     <h3 className="font-bold text-gray-900 text-base leading-tight">
-                      {isStartKm ? 'Start KM Photo' : isEndKm ? 'End KM Photo' : 'Mortality Photo'}
+                      {photoModal.isTrip
+                        ? (isStartKm ? 'Trip Start KM Photo' : 'Trip End KM Photo')
+                        : (isMaterial ? 'Farm Material Photo' : 'Farm Mortality Photo')}
                     </h3>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      {photoModal.entry.farmer_name || photoModal.entry.farmer || 'Farmer Entry'}
-                      {photoModal.entry.batch ? ` · Batch #${photoModal.entry.batch}` : ''}
-                      {isMortality && photoModal.entry.mortality !== undefined ? ` · ${photoModal.entry.mortality} Mortality` : ''}
-                      {isMortality && (photoModal.entry.mortality_reason || photoModal.entry.reason) ? ` · Reason: ${photoModal.entry.mortality_reason || photoModal.entry.reason}` : ''}
-                      {isStartKm && photoModal.startKm ? ` · Start: ${photoModal.startKm} KM` : ''}
-                      {isEndKm && photoModal.endKm ? ` · End: ${photoModal.endKm} KM` : ''}
-                      {photoModal.vehicleNo && (isStartKm || isEndKm) ? ` · 🚗 ${photoModal.vehicleNo}` : ''}
+                      {photoModal.isTrip ? (
+                        <>
+                          <span className="font-semibold text-gray-700">{photoModal.driver?.user_display_name || photoModal.entry.farmer_name}</span>
+                          {photoModal.vehicleNo ? ` · 🚗 ${photoModal.vehicleNo}` : ''}
+                          {isStartKm && photoModal.startKm ? ` · Start: ${photoModal.startKm} KM` : ''}
+                          {isEndKm && photoModal.endKm ? ` · End: ${photoModal.endKm} KM` : ''}
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-semibold text-gray-700">{photoModal.entry.farmer_name || photoModal.entry.farmer || 'Farmer Entry'}</span>
+                          {photoModal.entry.batch ? ` · Batch #${photoModal.entry.batch}` : ''}
+                          {isMortality && photoModal.entry.mortality !== undefined ? ` · ${photoModal.entry.mortality} Mortality` : ''}
+                          {isMortality && (photoModal.entry.mortality_reason || photoModal.entry.reason) ? ` · Reason: ${photoModal.entry.mortality_reason || photoModal.entry.reason}` : ''}
+                          {isMaterial && photoModal.entry.material ? ` · Material: ${photoModal.entry.material}` : ''}
+                        </>
+                      )}
                     </p>
                   </div>
                 </div>
@@ -1846,75 +2624,101 @@ const BroilerDashBoard = () => {
 
               {/* Modal Tabs Navigation Bar */}
               <div className="px-6 py-2.5 bg-gray-50/90 border-b border-gray-200/70 flex items-center gap-2 overflow-x-auto">
-                {/* Mortality Tab */}
-                <button
-                  type="button"
-                  onClick={() => handleSwitchPhotoTab('mortality')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    isMortality
-                      ? 'bg-orange-500 text-white shadow-xs'
-                      : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
-                  }`}
-                >
-                  <span>Mortality Photo</span>
-                  {photoModal.mortalityPhotos?.length > 0 && (
-                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                      isMortality ? 'bg-orange-600 text-white' : 'bg-orange-100 text-orange-700'
-                    }`}>
-                      {photoModal.mortalityPhotos.length}
-                    </span>
-                  )}
-                </button>
+                {photoModal.isTrip ? (
+                  <>
+                    {/* Start KM Tab */}
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchPhotoTab('start_km')}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                        isStartKm
+                          ? 'bg-blue-600 text-white shadow-xs'
+                          : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
+                      }`}
+                    >
+                      <span>Start KM</span>
+                      {photoModal.startKm && (
+                        <span className={`text-[10px] font-semibold opacity-90 px-1 py-0.2 rounded ${isStartKm ? 'bg-blue-700 text-white' : 'bg-blue-50 text-blue-700'}`}>
+                          {photoModal.startKm}
+                        </span>
+                      )}
+                      {photoModal.startKmPhotos?.length > 0 && (
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          isStartKm ? 'bg-blue-700 text-white' : 'bg-blue-100 text-blue-700'
+                        }`}>
+                          {photoModal.startKmPhotos.length}
+                        </span>
+                      )}
+                    </button>
 
-                {/* Start KM Tab */}
-                <button
-                  type="button"
-                  onClick={() => handleSwitchPhotoTab('start_km')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    isStartKm
-                      ? 'bg-blue-600 text-white shadow-xs'
-                      : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
-                  }`}
-                >
-                  <span>Start KM</span>
-                  {photoModal.startKm && (
-                    <span className={`text-[10px] font-semibold opacity-90 px-1 py-0.2 rounded ${isStartKm ? 'bg-blue-700 text-white' : 'bg-blue-50 text-blue-700'}`}>
-                      {photoModal.startKm}
-                    </span>
-                  )}
-                  {photoModal.startKmPhotos?.length > 0 && (
-                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                      isStartKm ? 'bg-blue-700 text-white' : 'bg-blue-100 text-blue-700'
-                    }`}>
-                      {photoModal.startKmPhotos.length}
-                    </span>
-                  )}
-                </button>
+                    {/* End KM Tab */}
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchPhotoTab('end_km')}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                        isEndKm
+                          ? 'bg-green-600 text-white shadow-xs'
+                          : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
+                      }`}
+                    >
+                      <span>End KM</span>
+                      {photoModal.endKm && (
+                        <span className={`text-[10px] font-semibold opacity-90 px-1 py-0.2 rounded ${isEndKm ? 'bg-green-700 text-white' : 'bg-green-50 text-green-700'}`}>
+                          {photoModal.endKm}
+                        </span>
+                      )}
+                      {photoModal.endKmPhotos?.length > 0 && (
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          isEndKm ? 'bg-green-700 text-white' : 'bg-green-100 text-green-700'
+                        }`}>
+                          {photoModal.endKmPhotos.length}
+                        </span>
+                      )}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    {/* Mortality Tab */}
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchPhotoTab('mortality')}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                        isMortality
+                          ? 'bg-orange-500 text-white shadow-xs'
+                          : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
+                      }`}
+                    >
+                      <span>Mortality Photo</span>
+                      {photoModal.mortalityPhotos?.length > 0 && (
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          isMortality ? 'bg-orange-600 text-white' : 'bg-orange-100 text-orange-700'
+                        }`}>
+                          {photoModal.mortalityPhotos.length}
+                        </span>
+                      )}
+                    </button>
 
-                {/* End KM Tab */}
-                <button
-                  type="button"
-                  onClick={() => handleSwitchPhotoTab('end_km')}
-                  className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
-                    isEndKm
-                      ? 'bg-green-600 text-white shadow-xs'
-                      : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
-                  }`}
-                >
-                  <span>End KM</span>
-                  {photoModal.endKm && (
-                    <span className={`text-[10px] font-semibold opacity-90 px-1 py-0.2 rounded ${isEndKm ? 'bg-green-700 text-white' : 'bg-green-50 text-green-700'}`}>
-                      {photoModal.endKm}
-                    </span>
-                  )}
-                  {photoModal.endKmPhotos?.length > 0 && (
-                    <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
-                      isEndKm ? 'bg-green-700 text-white' : 'bg-green-100 text-green-700'
-                    }`}>
-                      {photoModal.endKmPhotos.length}
-                    </span>
-                  )}
-                </button>
+                    {/* Material Photo Tab */}
+                    <button
+                      type="button"
+                      onClick={() => handleSwitchPhotoTab('material')}
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all cursor-pointer ${
+                        isMaterial
+                          ? 'bg-teal-600 text-white shadow-xs'
+                          : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200/80'
+                      }`}
+                    >
+                      <span>Material Photo</span>
+                      {photoModal.materialPhotos?.length > 0 && (
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
+                          isMaterial ? 'bg-teal-700 text-white' : 'bg-teal-100 text-teal-700'
+                        }`}>
+                          {photoModal.materialPhotos.length}
+                        </span>
+                      )}
+                    </button>
+                  </>
+                )}
               </div>
 
               {/* Modal Body */}
@@ -1932,7 +2736,7 @@ const BroilerDashBoard = () => {
                         />
                       ) : (
                         <div className="p-8 text-center flex flex-col items-center justify-center space-y-2">
-                          <FiAlertCircle className={isStartKm ? 'text-blue-500' : isEndKm ? 'text-green-500' : 'text-amber-500'} size={36} />
+                          <FiAlertCircle className={isStartKm ? 'text-blue-500' : isEndKm ? 'text-green-500' : isMaterial ? 'text-teal-500' : 'text-amber-500'} size={36} />
                           <p className="text-sm font-semibold text-gray-800">Photo Details Captured from Mobile App</p>
                           <p className="text-xs text-gray-500 max-w-sm">
                             File: <span className="font-mono text-[11px] text-gray-700 font-medium break-all">{currentPhoto.fileName || currentPhoto.name || currentPhoto.uri || 'photo.jpg'}</span>
@@ -1941,7 +2745,7 @@ const BroilerDashBoard = () => {
                             <button
                               onClick={() => window.open(currentUrl, '_blank')}
                               className={`mt-2 px-3.5 py-1.5 text-white rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition shadow-xs cursor-pointer ${
-                                isStartKm ? 'bg-blue-600 hover:bg-blue-700' : isEndKm ? 'bg-green-600 hover:bg-green-700' : 'bg-orange-500 hover:bg-orange-600'
+                                isStartKm ? 'bg-blue-600 hover:bg-blue-700' : isEndKm ? 'bg-green-600 hover:bg-green-700' : isMaterial ? 'bg-teal-600 hover:bg-teal-700' : 'bg-orange-500 hover:bg-orange-600'
                               }`}
                             >
                               <FiExternalLink size={14} /> Open Image Link
@@ -1963,7 +2767,7 @@ const BroilerDashBoard = () => {
                             }}
                             className={`p-1 border-2 rounded-lg transition overflow-hidden h-14 w-14 flex-shrink-0 bg-white cursor-pointer ${
                               activePhotoIdx === pIdx 
-                                ? (isStartKm ? 'border-blue-500 shadow-sm' : isEndKm ? 'border-green-500 shadow-sm' : 'border-orange-500 shadow-sm') 
+                                ? (isStartKm ? 'border-blue-500 shadow-sm' : isEndKm ? 'border-green-500 shadow-sm' : isMaterial ? 'border-teal-500 shadow-sm' : 'border-orange-500 shadow-sm') 
                                 : 'border-gray-200 opacity-70 hover:opacity-100'
                             }`}
                           >
@@ -1983,7 +2787,7 @@ const BroilerDashBoard = () => {
                       <div>
                         <span className="text-[10px] uppercase font-bold text-gray-400 block">File Name</span>
                         <span className="font-medium text-gray-800 truncate block" title={currentPhoto.name || currentPhoto.fileName || '-'}>
-                          {currentPhoto.name || currentPhoto.fileName || (isStartKm ? 'start_km.jpg' : isEndKm ? 'end_km.jpg' : 'mortality.jpg')}
+                          {currentPhoto.name || currentPhoto.fileName || (isStartKm ? 'start_km.jpg' : isEndKm ? 'end_km.jpg' : isMaterial ? 'material.jpg' : 'mortality.jpg')}
                         </span>
                       </div>
                       <div>
@@ -1991,6 +2795,7 @@ const BroilerDashBoard = () => {
                         <span className="font-medium text-gray-800 block">
                           {isStartKm ? (photoModal.startKm ? `Start: ${photoModal.startKm} KM` : 'Start Odometer') :
                            isEndKm ? (photoModal.endKm ? `End: ${photoModal.endKm} KM` : 'End Odometer') :
+                           isMaterial ? (photoModal.entry.material || 'Material Upload') :
                            `${photoModal.entry.mortality || 0} Mortality`}
                         </span>
                       </div>
@@ -2003,7 +2808,7 @@ const BroilerDashBoard = () => {
                       <div>
                         <span className="text-[10px] uppercase font-bold text-gray-400 block">Recorded By</span>
                         <span className="font-medium text-gray-800 truncate block">
-                          {photoModal.entry.user_display_name || '-'}
+                          {photoModal.driver?.user_display_name || photoModal.entry.user_display_name || '-'}
                         </span>
                       </div>
                     </div>
@@ -2013,6 +2818,7 @@ const BroilerDashBoard = () => {
                     <div className={`p-4 rounded-2xl ${
                       isStartKm ? 'bg-blue-50 text-blue-500' :
                       isEndKm ? 'bg-green-50 text-green-500' :
+                      isMaterial ? 'bg-teal-50 text-teal-500' :
                       'bg-amber-50 text-amber-500'
                     }`}>
                       <FiImage size={32} />
@@ -2020,6 +2826,7 @@ const BroilerDashBoard = () => {
                     <p className="text-sm font-semibold text-gray-800">
                       {isStartKm ? 'No Start KM Photo Attached' :
                        isEndKm ? 'No End KM Photo Attached' :
+                       isMaterial ? 'No Material Photo Attached' :
                        'No Mortality Photo Attached'}
                     </p>
                     <p className="text-xs text-gray-500">
@@ -2027,6 +2834,8 @@ const BroilerDashBoard = () => {
                         photoModal.startKm ? `Recorded Odometer: ${photoModal.startKm} KM (No image file attached)` : 'No start KM photo recorded for this trip.'
                       ) : isEndKm ? (
                         photoModal.endKm ? `Recorded Odometer: ${photoModal.endKm} KM (No image file attached)` : 'No end KM photo recorded for this trip.'
+                      ) : isMaterial ? (
+                        `Material: ${photoModal.entry.material || '-'} (No photo uploaded from mobile).`
                       ) : (
                         `Recorded Mortality: ${photoModal.entry.mortality || 0} count (No photo uploaded).`
                       )}
@@ -2050,6 +2859,7 @@ const BroilerDashBoard = () => {
                       className={`px-3.5 py-1.5 border rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition shadow-2xs cursor-pointer ${
                         isStartKm ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-200/80' :
                         isEndKm ? 'bg-green-50 text-green-600 hover:bg-green-100 border-green-200/80' :
+                        isMaterial ? 'bg-teal-50 text-teal-600 hover:bg-teal-100 border-teal-200/80' :
                         'bg-orange-50 text-orange-600 hover:bg-orange-100 border-orange-200/80'
                       }`}
                     >
