@@ -5,12 +5,13 @@ import { LuImport, LuPlus } from "react-icons/lu";
 import { FiEdit2, FiChevronDown } from "react-icons/fi";
 import { FaSpinner, FaTimes } from "react-icons/fa";
 import { IoCloseSharp } from "react-icons/io5";
+import { MdSync } from "react-icons/md";
 import Swal from "sweetalert2";
 import axios from "axios";
 import ExcelExport from "../../../utils/ExcelExport";
 import { CustomDropdown } from "../../../components/CustomDropdown";
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const parseIds = (ids) => {
     if (!ids) return [];
     if (Array.isArray(ids)) return ids;
@@ -34,7 +35,7 @@ const isUserInPlant = (userPlantId, targetPlant) => {
     return userPlants.includes(String(targetPlant).trim().toLowerCase());
 };
 
-// ─── Multi-Select with search ────────────────────────────────────────────────
+// â”€â”€â”€ Multi-Select with search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const MultiSelectDropdown = ({ label, options, selected, onChange, isDisabled }) => {
     const [search, setSearch] = useState("");
     const [open, setOpen] = useState(false);
@@ -130,7 +131,7 @@ const MultiSelectDropdown = ({ label, options, selected, onChange, isDisabled })
     );
 };
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Main Component â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const FarmerLineMaster = () => {
     const [data, setData] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
@@ -139,6 +140,8 @@ const FarmerLineMaster = () => {
     const [modalOpen, setModalOpen] = useState(false);
     const [editItem, setEditItem] = useState(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [syncingLineId, setSyncingLineId] = useState(null);
+    const [isSyncingAll, setIsSyncingAll] = useState(false);
 
     const [formData, setFormData] = useState({
         line_farm_id: "",
@@ -266,19 +269,10 @@ const FarmerLineMaster = () => {
         };
     });
 
-    const assignedFarmerIds = new Set();
-    data.forEach((item) => {
-        if (editItem && item.id === editItem.id) return;
-        const fList = parseIds(item.farmer_ids);
-        fList.forEach((fid) => assignedFarmerIds.add(String(fid)));
-    });
-
-    const farmerOptions = farmers
-        .filter((f) => !assignedFarmerIds.has(String(f.farmer_supplier)))
-        .map((f) => ({
-            label: `${f.farmer_name} (${f.farmer_supplier})`,
-            value: f.farmer_supplier,
-        }));
+    const farmerOptions = farmers.map((f) => ({
+        label: `${f.farmer_name} (${f.farmer_supplier})`,
+        value: f.farmer_supplier,
+    }));
 
     const userOptions = users
         .filter((u) => isUserInPlant(u.plant_id, formData.plant))
@@ -312,12 +306,31 @@ const FarmerLineMaster = () => {
         setFormData({ line_farm_id: "", line_id: "", name: "", plant: "", farmer_ids: [], user_ids: [] });
     };
 
-    const handleLineFarmChange = (selectedId) => {
+    const handleLineFarmChange = async (selectedId) => {
         const lf = lineFarms.find((l) => String(l.id) === String(selectedId));
 
         const allowedUserIds = users
             .filter((u) => isUserInPlant(u.plant_id, lf?.plant))
             .map((u) => u.id);
+
+        let plantFarmers = [];
+        if (lf?.plant) {
+            try {
+                setIsLoadingFarmers(true);
+                const res = await axios.get("broiler/farmer/get-by-farmer", {
+                    params: { plant: lf.plant },
+                });
+                plantFarmers = res.data?.data || [];
+                setFarmers(plantFarmers);
+            } catch (err) {
+                console.error("Failed to load farmers:", err);
+            } finally {
+                setIsLoadingFarmers(false);
+            }
+        }
+
+        // Auto-select all farmers from this plant by default!
+        const autoFarmerIds = plantFarmers.map((f) => f.farmer_supplier).filter(Boolean);
 
         setFormData((prev) => ({
             ...prev,
@@ -325,7 +338,7 @@ const FarmerLineMaster = () => {
             line_id: lf?.line_id ?? "",
             name: lf?.name ?? "",
             plant: lf?.plant ?? "",
-            farmer_ids: [],
+            farmer_ids: autoFarmerIds,
             user_ids: (prev.user_ids || []).filter((uid) =>
                 allowedUserIds.some((allowedId) => String(allowedId) === String(uid))
             ),
@@ -418,6 +431,87 @@ const FarmerLineMaster = () => {
         }
     };
 
+
+    const handleSyncPlantFarmers = async (item) => {
+        const confirmResult = await Swal.fire({
+            title: "Sync Plant Farmers?",
+            html: `This will automatically add all <b>unassigned farmers</b> from plant <b>${getPlantDisplay(item.line_farm_id)}</b> to line <b>${item.line_id || item.name}</b>.<br/><br/>Farmers already assigned to other lines will not be moved.`,
+            icon: "question",
+            showCancelButton: true,
+            confirmButtonColor: "#f97316",
+            cancelButtonColor: "#6b7280",
+            confirmButtonText: "Yes, Sync Now!",
+        });
+        if (!confirmResult.isConfirmed) return;
+
+        try {
+            setSyncingLineId(item.id);
+            const res = await axios.post("broiler/farmer-line/sync-plant-farmers", {
+                line_farm_id: item.line_farm_id,
+            });
+            if (res.data?.success) {
+                Swal.fire({
+                    icon: "success",
+                    title: "Sync Complete!",
+                    text: res.data.message || "Farmers synced successfully.",
+                    timer: 2000,
+                    showConfirmButton: false,
+                });
+                await fetchData();
+            } else {
+                Swal.fire({ icon: "error", title: "Sync failed", text: res.data?.message || "Could not sync." });
+            }
+        } catch (err) {
+            console.error("Sync error:", err);
+            Swal.fire({
+                icon: "error",
+                title: "Sync failed",
+                text: err?.response?.data?.message || err.message || "Request failed.",
+            });
+        } finally {
+            setSyncingLineId(null);
+        }
+    };
+
+    const handleSyncAllLines = async () => {
+        const confirmResult = await Swal.fire({
+            title: "Sync All Lines?",
+            html: "This will automatically populate all plant farmers into their respective lines across all plants.",
+            icon: "question",
+            showCancelButton: true,
+            confirmButtonColor: "#f97316",
+            cancelButtonColor: "#6b7280",
+            confirmButtonText: "Yes, Sync All Lines!",
+        });
+        if (!confirmResult.isConfirmed) return;
+
+        try {
+            setIsSyncingAll(true);
+            const res = await axios.post("broiler/farmer-line/sync-all-lines");
+            if (res.data?.success) {
+                Swal.fire({
+                    icon: "success",
+                    title: "Sync Complete!",
+                    text: res.data.message || "All lines synced successfully.",
+                    timer: 2500,
+                    showConfirmButton: false,
+                });
+                await fetchData();
+            } else {
+                Swal.fire({ icon: "error", title: "Sync failed", text: res.data?.message || "Could not sync." });
+            }
+        } catch (err) {
+            console.error("Sync error:", err);
+            Swal.fire({
+                icon: "error",
+                title: "Sync failed",
+                text: err?.response?.data?.message || err.message || "Request failed.",
+            });
+        } finally {
+            setIsSyncingAll(false);
+        }
+    };
+
     const handleExport = () => ExcelExport(data, "farmer_line_master.xlsx");
 
     const getPlantDisplay = (plantId) => {
@@ -428,12 +522,20 @@ const FarmerLineMaster = () => {
     const renderFarmerIds = (ids) => {
         const list = parseIds(ids);
         if (list.length === 0) return "-";
-        return list
-            .map((id) => {
-                const f = allFarmers.find((o) => String(o.farmer_supplier) === String(id));
-                return f ? `${f.farmer_name} (${f.farmer_supplier})` : id;
-            })
-            .join(", ");
+        const names = list.map((id) => {
+            const f = allFarmers.find((o) => String(o.farmer_supplier) === String(id));
+            return f ? `${f.farmer_name} (${f.farmer_supplier})` : id;
+        });
+        return (
+            <div className="flex flex-col items-start gap-1" title={names.join(", ")}>
+                <span className="font-semibold text-orange-700 bg-orange-100 px-2.5 py-0.5 rounded-full text-xs inline-flex items-center gap-1">
+                    {list.length} Farmers
+                </span>
+                <span className="text-xs text-gray-500 line-clamp-1 max-w-[240px]">
+                    {names.slice(0, 2).join(", ")}{list.length > 2 ? ` +${list.length - 2} more` : ""}
+                </span>
+            </div>
+        );
     };
 
     const renderUserIds = (ids) => {
@@ -447,7 +549,7 @@ const FarmerLineMaster = () => {
             .join(", ");
     };
 
-    // ── Pagination & Search ───────────────────────────────────────────────────
+    // â”€â”€ Pagination & Search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const filteredData = data.filter((item) => {
         const queryLower = searchQuery.toLowerCase();
 
@@ -479,7 +581,7 @@ const FarmerLineMaster = () => {
 
     return (
         <div className="rounded-lg shadow flex-1">
-            {/* ── Modal ── */}
+            {/* â”€â”€ Modal â”€â”€ */}
             {modalOpen && (
                 <div className="fixed inset-0 bg-black bg-opacity-40 flex justify-center items-center z-50 backdrop-blur-sm">
                     <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden font-poppins flex flex-col max-h-[92vh]">
@@ -582,7 +684,7 @@ const FarmerLineMaster = () => {
                 </div>
             )}
 
-            {/* ── Page ── */}
+            {/* â”€â”€ Page â”€â”€ */}
             <div className="bg-[#F9F9FC] h-screen relative">
                 <div className="space-y-4 pt-3 px-6 font-poppins">
                     <h1 className="text-xl font-bold text-gray-900">Farmer Line Master</h1>
@@ -604,6 +706,15 @@ const FarmerLineMaster = () => {
                             />
                         </div>
                         <div className="flex gap-3">
+                            <button
+                                onClick={handleSyncAllLines}
+                                disabled={isSyncingAll}
+                                className="px-4 py-2 bg-emerald-50 text-emerald-700 border border-emerald-300 rounded-lg hover:bg-emerald-600 hover:text-white text-xs flex items-center gap-2 transition disabled:opacity-50"
+                                title="Auto-sync all farmers from each plant into their respective line"
+                            >
+                                {isSyncingAll ? <FaSpinner className="animate-spin" size={16} /> : <MdSync size={16} />}
+                                Sync All Lines
+                            </button>
                             <button
                                 onClick={handleExport}
                                 className="px-4 py-2 bg-[#EFE8E0] text-[#F3890A] border rounded-lg hover:bg-orange-500 hover:text-white text-xs flex items-center gap-2"
@@ -661,6 +772,17 @@ const FarmerLineMaster = () => {
                                                     title="Edit"
                                                 >
                                                     <FiEdit2 size={18} />
+                                                </button>
+                                                <button
+                                                    onClick={() => handleSyncPlantFarmers(item)}
+                                                    className="hover:text-green-600 text-gray-500 disabled:opacity-40"
+                                                    title="Auto-sync all unassigned plant farmers into this line"
+                                                    disabled={syncingLineId === item.id}
+                                                >
+                                                    {syncingLineId === item.id
+                                                        ? <FaSpinner size={16} className="animate-spin" />
+                                                        : <MdSync size={18} />
+                                                    }
                                                 </button>
                                                 <button
                                                     onClick={() => handleDelete(item)}
